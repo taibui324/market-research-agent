@@ -266,7 +266,7 @@ Collect broader trend data from:
   "confidence": 0.78,
   "updatedAt": "2025-09-16T00:00:00Z"
 }
-
+```
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/mermaid-js/mermaid/develop/docs/public/favicon.svg" height="64" />
@@ -386,5 +386,4 @@ flowchart LR
 
     %% ===== Misc integrations =====
     A -. "map embeds" .-> GMAPS
-
-
+```
