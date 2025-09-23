@@ -12,8 +12,10 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
+from typing import Optional
 
 from backend.graph import Graph
+from backend.nodes.orchestrator import ThreeCAnalysisOrchestrator
 from backend.services.mongodb import MongoDBService
 from backend.services.pdf_service import PDFService
 from backend.services.websocket_manager import WebSocketManager
@@ -62,16 +64,34 @@ if mongo_uri := os.getenv("MONGODB_URI"):
 
 class ResearchRequest(BaseModel):
     company: str
-    company_url: str | None = None
-    industry: str | None = None
-    hq_location: str | None = None
+    company_url: Optional[str] = None
+    industry: Optional[str] = None
+    hq_location: Optional[str] = None
+
+class MarketResearchRequest(BaseModel):
+    """Request model for 3C market research analysis"""
+    analysis_type: str = "3c_analysis"  # Type of analysis to perform
+    target_market: str = "japanese_curry"  # Market focus for analysis
+    market_segment: Optional[str] = None  # Specific market segment
+    company: Optional[str] = None  # Optional company context
+    company_url: Optional[str] = None  # Optional company URL
+    industry: Optional[str] = None  # Optional industry context
+    hq_location: Optional[str] = None  # Optional location context
 
 class PDFGenerationRequest(BaseModel):
     report_content: str
-    company_name: str | None = None
+    company_name: Optional[str] = None
 
 @app.options("/research")
 async def preflight():
+    response = JSONResponse(content=None, status_code=200)
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
+    return response
+
+@app.options("/research/3c-analysis")
+async def preflight_3c():
     response = JSONResponse(content=None, status_code=200)
     response.headers["Access-Control-Allow-Origin"] = "*"
     response.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
@@ -89,7 +109,8 @@ async def research(data: ResearchRequest):
             "status": "accepted",
             "job_id": job_id,
             "message": "Research started. Connect to WebSocket for updates.",
-            "websocket_url": f"/research/ws/{job_id}"
+            "websocket_url": f"/research/ws/{job_id}",
+            "analysis_type": "company_research"
         })
         response.headers["Access-Control-Allow-Origin"] = "*"
         response.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
@@ -98,6 +119,31 @@ async def research(data: ResearchRequest):
 
     except Exception as e:
         logger.error(f"Error initiating research: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/research/3c-analysis")
+async def market_research(data: MarketResearchRequest):
+    """Endpoint for 3C market research analysis"""
+    try:
+        logger.info(f"Received 3C analysis request for {data.target_market} market")
+        job_id = str(uuid.uuid4())
+        asyncio.create_task(process_3c_analysis(job_id, data))
+
+        response = JSONResponse(content={
+            "status": "accepted",
+            "job_id": job_id,
+            "message": "3C Analysis started. Connect to WebSocket for updates.",
+            "websocket_url": f"/research/ws/{job_id}",
+            "analysis_type": "3c_analysis",
+            "target_market": data.target_market
+        })
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
+        return response
+
+    except Exception as e:
+        logger.error(f"Error initiating 3C analysis: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 async def process_research(job_id: str, data: ResearchRequest):
@@ -169,6 +215,152 @@ async def process_research(job_id: str, data: ResearchRequest):
         )
         if mongodb:
             mongodb.update_job(job_id=job_id, status="failed", error=str(e))
+
+async def process_3c_analysis(job_id: str, data: MarketResearchRequest):
+    """Process 3C market research analysis workflow"""
+    try:
+        if mongodb:
+            mongodb.create_job(job_id, data.dict())
+        await asyncio.sleep(1)  # Allow WebSocket connection
+
+        await manager.send_status_update(
+            job_id, 
+            status="processing", 
+            message="Starting 3C Analysis workflow"
+        )
+
+        # Import MarketResearchState here to avoid circular imports
+        from backend.classes.state import MarketResearchState
+        
+        # Initialize 3C analysis orchestrator
+        orchestrator = ThreeCAnalysisOrchestrator(
+            websocket_manager=manager,
+            job_id=job_id
+        )
+
+        # Create initial state for 3C analysis
+        initial_state = MarketResearchState(
+            analysis_type=data.analysis_type,
+            target_market=data.target_market,
+            market_segment=data.market_segment or "general",
+            company=data.company or "Market Analysis",
+            company_url=data.company_url,
+            industry=data.industry,
+            hq_location=data.hq_location,
+            websocket_manager=manager,
+            job_id=job_id,
+            messages=[],
+            # Initialize required fields with empty values
+            site_scrape={},
+            financial_data={},
+            news_data={},
+            industry_data={},
+            company_data={},
+            curated_financial_data={},
+            curated_news_data={},
+            curated_industry_data={},
+            curated_company_data={},
+            financial_briefing="",
+            news_briefing="",
+            industry_briefing="",
+            company_briefing="",
+            references=[],
+            briefings={},
+            report="",
+            # Initialize 3C analysis fields
+            consumer_insights={},
+            customer_personas=[],
+            pain_points=[],
+            purchase_journey={},
+            market_trends={},
+            trend_predictions=[],
+            adoption_curves={},
+            competitor_landscape={},
+            competitive_positioning={},
+            feature_comparisons=[],
+            market_gaps=[],
+            opportunities=[],
+            white_spaces=[],
+            recommendations=[],
+            market_focus_keywords=[]
+        )
+
+        # Execute 3C analysis workflow (report generation is now integrated)
+        final_state = {}
+        async for state in orchestrator.run(initial_state):
+            final_state.update(state)
+        
+        # Report is now generated as part of the workflow
+        report_content = final_state.get('report')
+        
+        if report_content:
+            logger.info(f"3C Analysis completed successfully (report length: {len(report_content)})")
+            job_status[job_id].update({
+                "status": "completed",
+                "report": report_content,
+                "analysis_type": "3c_analysis",
+                "target_market": data.target_market,
+                "last_update": datetime.now().isoformat()
+            })
+            if mongodb:
+                mongodb.update_job(job_id=job_id, status="completed")
+                mongodb.store_report(job_id=job_id, report_data={
+                    "report": report_content,
+                    "analysis_type": "3c_analysis",
+                    "target_market": data.target_market
+                })
+            await manager.send_status_update(
+                job_id=job_id,
+                status="completed",
+                message="3C Analysis completed successfully",
+                result={
+                    "report": report_content,
+                    "analysis_type": "3c_analysis",
+                    "target_market": data.target_market,
+                    "analysis_summary": final_state.get('analysis_synthesis', {})
+                }
+            )
+        else:
+            logger.error(f"3C Analysis completed without generating report. State keys: {list(final_state.keys())}")
+            
+            error_message = "3C Analysis completed but no report was generated"
+            if error := final_state.get('error'):
+                error_message = f"Error: {error}"
+            
+            await manager.send_status_update(
+                job_id=job_id,
+                status="failed",
+                message=error_message,
+                error=error_message
+            )
+
+    except Exception as e:
+        logger.error(f"3C Analysis failed: {str(e)}", exc_info=True)
+        await manager.send_status_update(
+            job_id=job_id,
+            status="failed",
+            message=f"3C Analysis failed: {str(e)}",
+            error=str(e)
+        )
+        if mongodb:
+            mongodb.update_job(job_id=job_id, status="failed", error=str(e))
+
+async def generate_3c_report(state: dict) -> str:
+    """Generate a formatted 3C analysis report using the MarketResearchReportGenerator"""
+    try:
+        from backend.services.report_generator import MarketResearchReportGenerator
+        
+        # Initialize the report generator
+        report_generator = MarketResearchReportGenerator()
+        
+        # Generate the comprehensive report
+        report = await report_generator.generate_3c_report(state)
+        
+        return report
+        
+    except Exception as e:
+        logger.error(f"Error generating 3C report: {e}")
+        return f"# 3C Analysis Report\n\nError generating report: {str(e)}"
 @app.get("/")
 async def ping():
     return {"message": "Alive"}
