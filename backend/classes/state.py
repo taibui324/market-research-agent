@@ -10,12 +10,27 @@ except ImportError:
 
 from backend.services.websocket_manager import WebSocketManager
 
-#Define the input state
+# Competitor data structure
+class CompetitorData(TypedDict, total=False):
+    company: Required[str]
+    company_url: NotRequired[str]
+    hq_location: NotRequired[str]
+
+# Main company with competitors structure
+class CompanyWithCompetitors(TypedDict, total=False):
+    company: Required[str]
+    company_url: NotRequired[str]
+    industry: NotRequired[str]
+    hq_location: NotRequired[str]
+    competitors: NotRequired[List[CompetitorData]]
+
+# Define the input state for main company with competitors
 class InputState(TypedDict, total=False):
     company: Required[str]
     company_url: NotRequired[str]
     hq_location: NotRequired[str]
     industry: NotRequired[str]
+    competitors: NotRequired[List[CompetitorData]]
     websocket_manager: NotRequired[WebSocketManager]
     job_id: NotRequired[str]
 
@@ -86,6 +101,8 @@ class ResearchState(InputState):
     company_briefing: str
     references: List[str]
     briefings: Dict[str, Any]
+    companies_data: Dict[str, Any]  # Processed company data for SWOT analysis
+    swot_analyses: Dict[str, Any]  # SWOT analysis results
     report: str
 
 class MarketResearchState(ResearchState):

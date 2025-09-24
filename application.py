@@ -5,6 +5,7 @@ import uuid
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
+from typing import List, Optional
 
 import uvicorn
 from dotenv import load_dotenv
@@ -14,11 +15,12 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from typing import Optional
 
-from backend.graph import Graph
+from backend.company_single_research import Graph
 from backend.nodes.orchestrator import ThreeCAnalysisOrchestrator
 from backend.services.mongodb import MongoDBService
 from backend.services.pdf_service import PDFService
 from backend.services.websocket_manager import WebSocketManager
+import json
 
 # Load environment variables from .env file at startup
 env_path = Path(__file__).parent / '.env'
@@ -31,7 +33,11 @@ logger.setLevel(logging.INFO)
 console_handler = logging.StreamHandler()
 logger.addHandler(console_handler)
 
-app = FastAPI(title="Tavily Company Research API")
+app = FastAPI(
+    title="Tavily Company Research API",
+    description="API for conducting comprehensive company research and analysis",
+    version="1.0.0"
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -46,27 +52,26 @@ pdf_service = PDFService({"pdf_output_dir": "pdfs"})
 
 job_status = defaultdict(lambda: {
     "status": "pending",
+    "progress": 0,
+    "message": "",
     "result": None,
     "error": None,
-    "debug_info": [],
-    "company": None,
-    "report": None,
-    "last_update": datetime.now().isoformat()
+    "created_at": datetime.now().isoformat(),
+    "completed_at": None
 })
 
-mongodb = None
-if mongo_uri := os.getenv("MONGODB_URI"):
-    try:
-        mongodb = MongoDBService(mongo_uri)
-        logger.info("MongoDB integration enabled")
-    except Exception as e:
-        logger.warning(f"Failed to initialize MongoDB: {e}. Continuing without persistence.")
+# Updated data models for main company with competitors
+class CompetitorData(BaseModel):
+    company: str
+    company_url: Optional[str] = None
+    hq_location: Optional[str] = None
 
 class ResearchRequest(BaseModel):
     company: str
     company_url: Optional[str] = None
     industry: Optional[str] = None
     hq_location: Optional[str] = None
+    competitors: List[CompetitorData] = []
 
 class MarketResearchRequest(BaseModel):
     """Request model for 3C market research analysis"""
@@ -82,12 +87,12 @@ class PDFGenerationRequest(BaseModel):
     report_content: str
     company_name: Optional[str] = None
 
-@app.options("/research")
+@app.options("/company_analysis", tags=["company_analysis"])
 async def preflight():
     response = JSONResponse(content=None, status_code=200)
     response.headers["Access-Control-Allow-Origin"] = "*"
     response.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
-    response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type"
     return response
 
 @app.options("/research/3c-analysis")
@@ -147,69 +152,157 @@ async def market_research(data: MarketResearchRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 async def process_research(job_id: str, data: ResearchRequest):
+    """Process research workflow for company analysis"""
     try:
+        # Initialize MongoDB if available
+        mongodb = None
+        try:
+            mongodb = MongoDBService()
+        except Exception as e:
+            logger.warning(f"MongoDB not available: {e}")
+
         if mongodb:
-            mongodb.create_job(job_id, data.dict())
-        await asyncio.sleep(1)  # Allow WebSocket connection
+            mongodb.create_job(job_id, {
+                "main_company": data.company,
+                "company_url": data.company_url,
+                "industry": data.industry,
+                "hq_location": data.hq_location,
+                "competitors": [competitor.dict() for competitor in data.competitors]
+            })
 
-        await manager.send_status_update(job_id, status="processing", message="Starting research")
+        await manager.send_status_update(
+            job_id, 
+            status="processing", 
+            message=f"Starting research for {data.company} and {len(data.competitors)} competitors"
+        )
 
+        # Initialize Graph with main company and competitors
         graph = Graph(
             company=data.company,
-            url=data.company_url,
+            company_url=data.company_url,
             industry=data.industry,
             hq_location=data.hq_location,
+            competitors=[competitor.dict() for competitor in data.competitors],
             websocket_manager=manager,
             job_id=job_id
         )
 
-        state = {}
-        async for s in graph.run(thread={}):
-            state.update(s)
-        
-        # Look for the compiled report in either location.
-        report_content = state.get('report') or (state.get('editor') or {}).get('report')
-        if report_content:
-            logger.info(f"Found report in final state (length: {len(report_content)})")
-            job_status[job_id].update({
-                "status": "completed",
-                "report": report_content,
-                "company": data.company,
-                "last_update": datetime.now().isoformat()
-            })
-            if mongodb:
-                mongodb.update_job(job_id=job_id, status="completed")
-                mongodb.store_report(job_id=job_id, report_data={"report": report_content})
-            await manager.send_status_update(
-                job_id=job_id,
-                status="completed",
-                message="Research completed successfully",
-                result={
-                    "report": report_content,
-                    "company": data.company
+        # Run the workflow
+        final_state = None
+        async for state in graph.run(thread={}):
+            # Capture the final state
+            final_state = state
+
+        # Wait a moment for any final processing
+        await asyncio.sleep(2)
+
+        # Save the final report to database if we have the state
+        if mongodb and final_state:
+            try:
+                # Debug: Log the available keys in the final state
+                logger.info(f"Final state keys: {list(final_state['swot'].keys())}")
+
+                # Remove non-serializable objects from state for logging
+                logger.info(f"Final state: {final_state}")
+
+                # Extract the report data from the correct keys in the final state
+                # The SWOT analysis is stored in swot_analyses, not in swot.report_content
+
+                # Get the SWOT analysis from the correct location
+                swot_analyses = final_state["swot"]["swot_analyses"]
+                companies_data = final_state["swot"]["companies_data"]
+
+                # Extract the main company's SWOT analysis as the report content
+                main_company = data.company
+                # report_content = swot_analyses.get(main_company, "")
+
+                # Debug: Log the extracted values
+                # logger.info(f"Extracted report_content length: {len(swot_analyses)}")
+                # logger.info(f"Extracted swot_analyses: {swot_analyses}")
+                # logger.info(f"Extracted companies_data: {companies_data}")
+
+                # Prepare report data for database storage
+                report_data = {
+                    "report_content": swot_analyses,                    
+                    "companies_data": companies_data,
+                    "main_company": data.company,
+                    "competitors": [c.dict() for c in data.competitors],
+                    "report_type": "competitive_analysis",
                 }
-            )
-        else:
-            logger.error(f"Research completed without finding report. State keys: {list(state.keys())}")
-            logger.error(f"Editor state: {state.get('editor', {})}")
-            
-            # Check if there was a specific error in the state
-            error_message = "No report found"
-            if error := state.get('error'):
-                error_message = f"Error: {error}"
-            
-            await manager.send_status_update(
-                job_id=job_id,
-                status="failed",
-                message="Research completed but no report was generated",
-                error=error_message
-            )
+
+                # Store the report in the database
+                mongodb.store_report(job_id, report_data)
+                logger.info(f"Successfully saved report to database for job {job_id}")
+
+            except Exception as e:
+                logger.error(f"Failed to save report to database: {e}")
+                raise Exception(f"Failed to save report to database: {e}")
+
+        # Query the database for the report using job_id
+        report_data = None
+        if mongodb:
+            try:
+                report_data = mongodb.get_report(job_id)
+                logger.info(f"Retrieved report from database for job {job_id}")
+            except Exception as e:
+                logger.warning(f"Failed to retrieve report from database: {e}")
+
+        if not report_data:
+            raise Exception("No report found in database")
+
+        # Extract data from the database
+        report_content = report_data.get("report_content", "")
+        swot_analyses = report_data.get("swot_analyses", {})
+        companies_data = report_data.get("companies_data", {})
+
+        # logger.info(f"Report content length: {len(report_content)}")
+        # logger.info(f"SWOT analyses count: {len(swot_analyses)}")
+        # logger.info(f"Companies data count: {len(companies_data)}")
+
+        if not report_content:
+            raise Exception("No report content found in database")
+
+        # Update job status
+        job_status[job_id]["status"] = "completed"
+        job_status[job_id]["progress"] = 100
+        job_status[job_id]["message"] = "Research completed successfully"
+        job_status[job_id]["result"] = {
+            "report_content": report_content,
+            "swot_analyses": swot_analyses,
+            "companies_analyzed": list(companies_data.keys()),
+            "main_company": data.company,
+            "competitors": [c.company for c in data.competitors]
+        }
+        job_status[job_id]["completed_at"] = datetime.now().isoformat()
+
+        # Send final WebSocket update
+        await manager.send_status_update(
+            job_id,
+            status="completed",
+            message="Research completed successfully",
+            result=job_status[job_id]["result"]
+        )
 
     except Exception as e:
-        logger.error(f"Research failed: {str(e)}")
+        logger.error(f"Error in background analysis: {str(e)}", exc_info=True)
+        job_status[job_id]["status"] = "error"
+        job_status[job_id]["error"] = str(e)
+        job_status[job_id]["message"] = f"Research failed: {str(e)}"
+
+        if mongodb:
+            try:
+                mongodb.update_job(job_id, {
+                    "status": "error",
+                    "error": str(e),
+                    "completed_at": datetime.now().isoformat()
+                })
+            except Exception as e:
+                logger.warning(f"Failed to update MongoDB with error: {e}")
+
+        # Send error WebSocket update
         await manager.send_status_update(
-            job_id=job_id,
-            status="failed",
+            job_id,
+            status="error",
             message=f"Research failed: {str(e)}",
             error=str(e)
         )
@@ -219,6 +312,13 @@ async def process_research(job_id: str, data: ResearchRequest):
 async def process_3c_analysis(job_id: str, data: MarketResearchRequest):
     """Process 3C market research analysis workflow"""
     try:
+        # Initialize MongoDB if available
+        mongodb = None
+        try:
+            mongodb = MongoDBService()
+        except Exception as e:
+            logger.warning(f"MongoDB not available: {e}")
+
         if mongodb:
             mongodb.create_job(job_id, data.dict())
         await asyncio.sleep(1)  # Allow WebSocket connection
@@ -361,19 +461,101 @@ async def generate_3c_report(state: dict) -> str:
     except Exception as e:
         logger.error(f"Error generating 3C report: {e}")
         return f"# 3C Analysis Report\n\nError generating report: {str(e)}"
+
 @app.get("/")
 async def ping():
     return {"message": "Alive"}
 
-@app.get("/research/pdf/{filename}")
+@app.post("/company_analysis", tags=["company_analysis"])
+async def company_analysis(data: ResearchRequest):
+    """
+    Start comprehensive research and analysis for a main company and its competitors.
+    Returns job_id immediately and processes in background.
+    """
+    logger.info(f"Starting research for main company: {data.company} with {len(data.competitors)} competitors")
+    
+    job_id = str(uuid.uuid4())
+    
+    # Initialize job status
+    job_status[job_id]["status"] = "pending"
+    job_status[job_id]["progress"] = 0
+    job_status[job_id]["message"] = f"Starting research for {data.company} and {len(data.competitors)} competitors"
+    job_status[job_id]["result"] = {
+        "main_company": data.company,
+        "competitors": [c.company for c in data.competitors],
+        "total_companies": len(data.competitors) + 1
+    }
+
+    # Start background task
+    asyncio.create_task(process_research(job_id, data))
+
+    # Return job_id immediately
+    return {
+        "job_id": job_id,
+        "status": "pending",
+        "message": "Research started in background",
+        "result": {
+            "main_company": data.company,
+            "competitors": [c.company for c in data.competitors],
+            "total_companies": len(data.competitors) + 1
+        }
+    }
+
+async def run_analysis_background(job_id: str, data: ResearchRequest):
+    """Background task to run the analysis"""
+    await process_research(job_id, data)
+
+@app.get("/job_status/{job_id}", tags=["job_status"])
+async def get_job_status(job_id: str):
+    """Get the status of a specific job"""
+    if job_id not in job_status:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    return {
+        "job_id": job_id,
+        "status": job_status[job_id]["status"],
+        "progress": job_status[job_id]["progress"],
+        "message": job_status[job_id]["message"],
+        "result": job_status[job_id]["result"],
+        "error": job_status[job_id]["error"],
+        "created_at": job_status[job_id]["created_at"],
+        "completed_at": job_status[job_id]["completed_at"]
+    }
+
+@app.get("/job_result/{job_id}", tags=["job_result"])
+async def get_job_result(job_id: str):
+    """Get the result of a completed job"""
+    if job_id not in job_status:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    if job_status[job_id]["status"] != "completed":
+        raise HTTPException(status_code=400, detail="Job not completed yet")
+    
+    return {
+        "job_id": job_id,
+        "status": job_status[job_id]["status"],
+        "result": job_status[job_id]["result"]
+    }
+
+@app.get("/company_analysis/pdf/{filename}", tags=["company_analysis"], summary="Get PDF Report", description="Download a generated PDF report by filename")
 async def get_pdf(filename: str):
+    """
+    Download a PDF report by filename.
+    
+    Returns the PDF file if it exists in the system.
+    """
     pdf_path = os.path.join("pdfs", filename)
     if not os.path.exists(pdf_path):
         raise HTTPException(status_code=404, detail="PDF not found")
     return FileResponse(pdf_path, media_type='application/pdf', filename=filename)
 
-@app.websocket("/research/ws/{job_id}")
+@app.websocket("/company_analysis/ws/{job_id}")
 async def websocket_endpoint(websocket: WebSocket, job_id: str):
+    """
+    WebSocket endpoint for real-time research progress updates.
+    
+    Connect to this endpoint to receive live updates about the research process.
+    """
     try:
         await websocket.accept()
         await manager.connect(websocket, job_id)
@@ -399,32 +581,76 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
         logger.error(f"WebSocket error for job {job_id}: {str(e)}", exc_info=True)
         manager.disconnect(websocket, job_id)
 
-@app.get("/research/{job_id}")
+@app.get("/company_analysis/{job_id}", tags=["company_analysis"], summary="Get Research Job Status", description="Retrieve the status and details of a research job")
 async def get_research(job_id: str):
-    if not mongodb:
-        raise HTTPException(status_code=501, detail="Database persistence not configured")
-    job = mongodb.get_job(job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="Research job not found")
-    return job
-
-@app.get("/research/{job_id}/report")
-async def get_research_report(job_id: str):
-    if not mongodb:
-        if job_id in job_status:
-            result = job_status[job_id]
-            if report := result.get("report"):
-                return {"report": report}
-        raise HTTPException(status_code=404, detail="Report not found")
+    """
+    Get the status and details of a research job.
     
-    report = mongodb.get_report(job_id)
-    if not report:
-        raise HTTPException(status_code=404, detail="Research report not found")
-    return report
+    Returns information about the research job including its current status,
+    progress, and any results or errors.
+    """
+    # This endpoint is now redundant as job_status is a defaultdict
+    # and the job_id will be in job_status.
+    # Keeping it for now as per instructions, but it will always return the current state.
+    if job_id not in job_status:
+        raise HTTPException(status_code=404, detail="Research job not found")
+    return job_status[job_id]
 
-@app.post("/generate-pdf")
+@app.get("/company_analysis/{job_id}/report", tags=["company_analysis"], summary="Get Research Report", description="Retrieve the final research report for a completed job")
+async def get_research_report(job_id: str):
+    """
+    Get the final research report for a completed job.
+    
+    Returns the comprehensive research report if the job has been completed.
+    """
+    # Initialize MongoDB if available
+    mongodb = None
+    try:
+        mongodb = MongoDBService()
+    except Exception as e:
+        logger.warning(f"MongoDB not available: {e}")
+        raise HTTPException(status_code=500, detail="Database not available")
+    
+    # Query the database for the report
+    try:
+        report_data = mongodb.get_report(job_id)
+        if not report_data:
+            raise HTTPException(status_code=404, detail="Research report not found")
+        
+        # Extract data from the database
+        report_content = report_data.get("report_content", "")
+        swot_analyses = report_data.get("swot_analyses", {})
+        companies_data = report_data.get("companies_data", {})
+        main_company = report_data.get("main_company")
+        competitors = report_data.get("competitors", [])
+        
+        if not report_content:
+            raise HTTPException(status_code=404, detail="No report content found")
+        
+        return {
+            "job_id": job_id,
+            "status": "completed",
+            "report_content": report_content,
+            "swot_analyses": swot_analyses,
+            "companies_analyzed": list(companies_data.keys()),
+            "main_company": main_company,
+            "competitors": competitors,
+            "created_at": report_data.get("created_at")
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error retrieving report from database: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve report: {str(e)}")
+
+@app.post("/generate-pdf", tags=["company_analysis"], summary="Generate PDF Report", description="Generate a PDF from markdown content and stream it to the client")
 async def generate_pdf(data: PDFGenerationRequest):
-    """Generate a PDF from markdown content and stream it to the client."""
+    """
+    Generate a PDF from markdown content and stream it to the client.
+    
+    Takes markdown content and converts it to a downloadable PDF file.
+    """
     try:
         success, result = pdf_service.generate_pdf_stream(data.report_content, data.company_name)
         if success:
