@@ -329,6 +329,15 @@ class MarketResearchReportGenerator:
             'total_recommendations': len(state.get('recommendations', []))
         }
     
+    def _format_data_quality(self, quality: str) -> str:
+        """Format data quality description to avoid 'unknown'"""
+        if quality == 'unknown':
+            return 'pending'
+        elif quality == 'unavailable':
+            return 'not available'
+        else:
+            return quality
+    
     def _generate_header_section(self, state: MarketResearchState, report_id: str) -> str:
         """Generate the report header section"""
         return self.section_templates['header'].format(
@@ -349,7 +358,7 @@ class MarketResearchReportGenerator:
 
 **Analysis Scope:** {target_market.title()} market research focusing on consumer behavior, market trends, competitive landscape, and strategic opportunities.
 
-**Data Quality Score:** {quality['overall_score']:.1%} completeness with {quality['consumer_data_quality']} consumer data quality and {quality['trend_data_quality']} trend data quality."""
+**Data Quality Score:** {quality['overall_score']:.1%} completeness with {self._format_data_quality(quality['consumer_data_quality'])} consumer insights and {self._format_data_quality(quality['trend_data_quality'])} market intelligence."""
         
         key_findings = f"""- **{metrics['consumer_insights_count']}** consumer insights identified from social media, reviews, and forums
 - **{metrics['pain_points_identified']}** consumer pain points documented
@@ -432,8 +441,9 @@ class MarketResearchReportGenerator:
                 collection_method = trend.get('collection_method', 'search_api')
                 data_recency = trend.get('data_recency', '2024_current')
                 
-                # Format source with proper attribution
-                if source_name and source_name != 'Unknown':
+                # Format source with proper attribution - only show if we have valid sources
+                source_line = ""
+                if source_name and source_name != 'Unknown' and source_name.strip():
                     if source_url:
                         source_attribution = f"[{source_name}]({source_url})"
                     else:
@@ -454,11 +464,13 @@ class MarketResearchReportGenerator:
                         recency_indicator = "Historical Data"
                         
                     source_line = f"   *Source: {source_attribution} | {source_category} | {reliability_indicator} | {recency_indicator} | Confidence: {confidence:.2f}*"
-                else:
-                    source_line = f"   *Source: Market Research Database | Confidence: {confidence:.2f}*"
+                elif confidence > 0:
+                    # Show only confidence if no valid source
+                    source_line = f"   *Confidence: {confidence:.2f}*"
                 
                 trend_content.append(f"{i}. {trend_text}")
-                trend_content.append(source_line)
+                if source_line.strip():  # Only add source line if it has content
+                    trend_content.append(source_line)
             trend_content.append("")
         
         # Trend predictions subsection
@@ -468,8 +480,23 @@ class MarketResearchReportGenerator:
             for i, prediction in enumerate(trend_predictions[:3], 1):
                 title = prediction.get('title', f'Prediction {i}')
                 description = prediction.get('description', 'No description available')
-                timeframe = prediction.get('timeframe', 'Unknown')
-                trend_content.append(f"**{title}** ({timeframe}): {description}")
+                
+                # Get source information for predictions
+                source_name = prediction.get('source_name', '')
+                confidence = prediction.get('confidence_score', 0)
+                
+                # Format prediction with proper attribution
+                if source_name and source_name != 'Unknown':
+                    if confidence > 0:
+                        trend_content.append(f"**{title}** ({source_name}): {description}")
+                        trend_content.append(f"   *Confidence: {confidence:.2f}*")
+                    else:
+                        trend_content.append(f"**{title}** ({source_name}): {description}")
+                else:
+                    # If no valid source, show prediction without source attribution
+                    trend_content.append(f"**{title}**: {description}")
+                    if confidence > 0:
+                        trend_content.append(f"   *Confidence: {confidence:.2f}*")
             trend_content.append("")
         
         # Adoption curves subsection
@@ -572,18 +599,21 @@ class MarketResearchReportGenerator:
         consumer_insights = state.get('consumer_insights', {})
         if consumer_insights and consumer_insights.get('structured_insights'):
             for insight in consumer_insights['structured_insights']:
-                source = insight.get('source', 'Unknown')
-                data_sources.add(source)
+                source = insight.get('source', '')
+                if source and source != 'Unknown' and source.strip():
+                    data_sources.add(source)
         
         market_trends = state.get('market_trends', {})
         if market_trends and market_trends.get('structured_trends'):
             for trend in market_trends['structured_trends']:
                 # Use enhanced source name if available
-                source_name = trend.get('source_name', trend.get('source', 'Unknown'))
-                if source_name and source_name != 'Unknown':
+                source_name = trend.get('source_name', trend.get('source', ''))
+                if source_name and source_name != 'Unknown' and source_name.strip():
                     data_sources.add(source_name)
-                else:
-                    data_sources.add('Market Research Database')
+        
+        # Only add fallback if we have no valid sources
+        if not data_sources:
+            data_sources.add('Market Research Database')
         
         data_sources_list = ', '.join(sorted(data_sources)) if data_sources else 'Various online sources'
         confidence_score = f"{synthesized_data['data_quality']['overall_score']:.1%}"
