@@ -2,5 +2,7 @@ from .financial import FinancialAnalyst
 from .news import NewsScanner
 from .industry import IndustryAnalyzer
 from .company import CompanyAnalyzer
+from .consumer import ConsumerAnalysisAgent
+from .trend import TrendAnalysisAgent
 
-__all__ = ["FinancialAnalyst", "NewsScanner", "IndustryAnalyzer", "CompanyAnalyzer"] 
+__all__ = ["FinancialAnalyst", "NewsScanner", "IndustryAnalyzer", "CompanyAnalyzer", "ConsumerAnalysisAgent", "TrendAnalysisAgent"] 
