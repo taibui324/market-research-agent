@@ -18,6 +18,8 @@ from ..utils.monitoring import (
 )
 from .researchers.consumer import ConsumerAnalysisAgent
 from .researchers.trend import TrendAnalysisAgent
+from .market_collector import MarketDataCollector
+from .market_curator import MarketDataCurator
 # Note: CompetitorAnalysisAgent will be imported once task 4 is complete
 # from .researchers.competitor import CompetitorAnalysisAgent
 
@@ -92,6 +94,10 @@ class ThreeCAnalysisOrchestrator:
         # TODO: Initialize competitor agent once task 4 is complete
         # self.competitor_agent = CompetitorAnalysisAgent()
         
+        # Initialize enhanced data pipeline components
+        self.data_collector = MarketDataCollector()
+        self.data_curator = MarketDataCurator()
+        
         # Initialize report generator
         self.report_generator = MarketResearchReportGenerator()
         
@@ -104,6 +110,8 @@ class ThreeCAnalysisOrchestrator:
         
         # Add nodes for 3C analysis workflow
         self.workflow.add_node("query_generation", self._generate_market_queries)
+        self.workflow.add_node("data_collection", self._collect_market_data)
+        self.workflow.add_node("data_curation", self._curate_market_data)
         self.workflow.add_node("consumer_analysis", self._run_consumer_analysis)
         self.workflow.add_node("trend_analysis", self._run_trend_analysis)
         # TODO: Add competitor analysis node once task 4 is complete
@@ -116,8 +124,14 @@ class ThreeCAnalysisOrchestrator:
         self.workflow.set_entry_point("query_generation")
         self.workflow.set_finish_point("report_generation")
         
+        # Connect query generation to data collection
+        self.workflow.add_edge("query_generation", "data_collection")
+        
+        # Connect data collection to curation
+        self.workflow.add_edge("data_collection", "data_curation")
+        
         # Run analysis agents sequentially to avoid state conflicts
-        self.workflow.add_edge("query_generation", "consumer_analysis")
+        self.workflow.add_edge("data_curation", "consumer_analysis")
         self.workflow.add_edge("consumer_analysis", "trend_analysis")
         # TODO: Add competitor analysis edge once task 4 is complete
         # self.workflow.add_edge("trend_analysis", "competitor_analysis")
@@ -291,6 +305,60 @@ class ThreeCAnalysisOrchestrator:
                 # Re-raise the exception to be handled by the calling code
                 raise
     
+    async def _handle_workflow_error(self, error: Exception, stage: str, state: MarketResearchState) -> MarketResearchState:
+        """Handle workflow-level errors with comprehensive logging and recovery"""
+        error_id = str(uuid.uuid4())[:8]
+        
+        # Log error with comprehensive context
+        log_error_with_context(
+            error,
+            component="3c_orchestrator_workflow",
+            job_id=self.job_id,
+            workflow_stage=stage,
+            error_id=error_id,
+            target_market=state.get('target_market', 'unknown'),
+            current_step=self._get_current_step(state)
+        )
+        
+        # Record error metric
+        performance_monitor.record_metric(
+            "workflow_error",
+            1,
+            {
+                "job_id": self.job_id or "unknown",
+                "stage": stage,
+                "error_type": type(error).__name__,
+                "error_id": error_id
+            }
+        )
+        
+        # Update state with error information
+        state['workflow_errors'] = state.get('workflow_errors', [])
+        state['workflow_errors'].append({
+            'error_id': error_id,
+            'stage': stage,
+            'error_type': type(error).__name__,
+            'error_message': str(error),
+            'timestamp': datetime.now().isoformat(),
+            'recovery_attempted': True
+        })
+        
+        # Send error notification via WebSocket
+        if self.websocket_manager and self.job_id:
+            await self.websocket_manager.send_status_update(
+                job_id=self.job_id,
+                status="error",
+                message=f"Workflow error in {stage}: {str(error)}",
+                error=str(error),
+                result={
+                    "error_id": error_id,
+                    "stage": stage,
+                    "recovery_status": "attempting_recovery"
+                }
+            )
+        
+        return state
+    
     async def _generate_market_queries(self, state: MarketResearchState) -> MarketResearchState:
         """Generate market-specific queries for Japanese curry research"""
         target_market = state.get('target_market', 'japanese_curry')
@@ -335,6 +403,138 @@ class ThreeCAnalysisOrchestrator:
         
         return state
     
+    @monitor_performance("data_collection", {"component": "3c_orchestrator"})
+    async def _collect_market_data(self, state: MarketResearchState) -> MarketResearchState:
+        """Collect market research data using enhanced data collection pipeline"""
+        try:
+            logger.info("Starting market data collection")
+            
+            if self.websocket_manager and self.job_id:
+                await self.websocket_manager.send_status_update(
+                    job_id=self.job_id,
+                    status="processing",
+                    message="Collecting market research data",
+                    result={"step": "Data Collection", "status": "starting"}
+                )
+            
+            # Get queries from previous step
+            queries = state.get('market_queries', [])
+            target_market = state.get('target_market', 'japanese_curry')
+            
+            # Collect data using enhanced market data collector
+            collected_data = await self.data_collector.collect_market_research_data(state)
+            
+            # Store collected data in state
+            state['raw_market_data'] = collected_data
+            state['data_collection_timestamp'] = datetime.now().isoformat()
+            
+            # Add message about data collection
+            messages = state.get('messages', [])
+            data_msg = f"📊 Collected market research data from {len(collected_data.get('sources', []))} sources"
+            messages.append(AIMessage(content=data_msg))
+            state['messages'] = messages
+            
+            logger.info(f"Market data collection completed: {len(collected_data.get('sources', []))} sources")
+            
+            # Track workflow metrics
+            await self._track_workflow_metrics(state, "data_collection")
+            
+            if self.websocket_manager and self.job_id:
+                await self.websocket_manager.send_status_update(
+                    job_id=self.job_id,
+                    status="processing",
+                    message="Market data collection completed",
+                    result={
+                        "step": "Data Collection", 
+                        "status": "completed",
+                        "sources_collected": len(collected_data.get('sources', []))
+                    }
+                )
+            
+        except Exception as e:
+            logger.error(f"Market data collection failed: {e}")
+            state['raw_market_data'] = {'status': 'failed', 'error': str(e)}
+            
+            if self.websocket_manager and self.job_id:
+                await self.websocket_manager.send_status_update(
+                    job_id=self.job_id,
+                    status="warning",
+                    message="Market data collection failed, continuing with available data",
+                    error=str(e)
+                )
+        
+        return state
+    
+    @monitor_performance("data_curation", {"component": "3c_orchestrator"})
+    async def _curate_market_data(self, state: MarketResearchState) -> MarketResearchState:
+        """Curate and filter market research data for quality and relevance"""
+        try:
+            logger.info("Starting market data curation")
+            
+            if self.websocket_manager and self.job_id:
+                await self.websocket_manager.send_status_update(
+                    job_id=self.job_id,
+                    status="processing",
+                    message="Curating market research data",
+                    result={"step": "Data Curation", "status": "starting"}
+                )
+            
+            # Get raw data from previous step
+            raw_data = state.get('raw_market_data', {})
+            target_market = state.get('target_market', 'japanese_curry')
+            
+            if raw_data.get('status') == 'failed':
+                logger.warning("Skipping data curation due to collection failure")
+                state['curated_market_data'] = {'status': 'skipped', 'reason': 'collection_failed'}
+            else:
+                # Curate data using enhanced market data curator
+                curated_data = await self.data_curator.curate_market_data(state)
+                
+                # Store curated data in state
+                state['curated_market_data'] = curated_data
+            
+            state['data_curation_timestamp'] = datetime.now().isoformat()
+            
+            # Add message about data curation
+            messages = state.get('messages', [])
+            if state['curated_market_data'].get('status') != 'skipped':
+                curation_msg = f"🔍 Curated market data with {state['curated_market_data'].get('quality_score', 0):.2f} quality score"
+            else:
+                curation_msg = "⚠️ Data curation skipped due to collection issues"
+            messages.append(AIMessage(content=curation_msg))
+            state['messages'] = messages
+            
+            logger.info("Market data curation completed")
+            
+            # Track workflow metrics
+            await self._track_workflow_metrics(state, "data_curation")
+            
+            if self.websocket_manager and self.job_id:
+                await self.websocket_manager.send_status_update(
+                    job_id=self.job_id,
+                    status="processing",
+                    message="Market data curation completed",
+                    result={
+                        "step": "Data Curation", 
+                        "status": "completed",
+                        "quality_score": state['curated_market_data'].get('quality_score', 0)
+                    }
+                )
+            
+        except Exception as e:
+            logger.error(f"Market data curation failed: {e}")
+            state['curated_market_data'] = {'status': 'failed', 'error': str(e)}
+            
+            if self.websocket_manager and self.job_id:
+                await self.websocket_manager.send_status_update(
+                    job_id=self.job_id,
+                    status="warning",
+                    message="Market data curation failed, continuing with raw data",
+                    error=str(e)
+                )
+        
+        return state
+    
     @monitor_performance("consumer_analysis", {"component": "3c_orchestrator"})
     async def _run_consumer_analysis(self, state: MarketResearchState) -> MarketResearchState:
         """Execute consumer analysis with error handling"""
@@ -349,6 +549,11 @@ class ThreeCAnalysisOrchestrator:
                     result={"step": "Consumer Analysis", "status": "starting"}
                 )
             
+            # Pass curated data to consumer analysis agent
+            curated_data = state.get('curated_market_data', {})
+            if curated_data.get('status') not in ['failed', 'skipped']:
+                state['enhanced_consumer_data'] = curated_data.get('consumer_data', {})
+            
             # Run consumer analysis agent
             result = await self.consumer_agent.run(state)
             
@@ -361,6 +566,9 @@ class ThreeCAnalysisOrchestrator:
                         state[key] = result[key]
             
             logger.info("Consumer analysis completed successfully")
+            
+            # Track workflow metrics
+            await self._track_workflow_metrics(state, "consumer_analysis")
             
             if self.websocket_manager and self.job_id:
                 await self.websocket_manager.send_status_update(
@@ -390,6 +598,11 @@ class ThreeCAnalysisOrchestrator:
                     result={"step": "Trend Analysis", "status": "starting"}
                 )
             
+            # Pass curated data to trend analysis agent
+            curated_data = state.get('curated_market_data', {})
+            if curated_data.get('status') not in ['failed', 'skipped']:
+                state['enhanced_trend_data'] = curated_data.get('trend_data', {})
+            
             # Run trend analysis agent
             result = await self.trend_agent.run(state)
             
@@ -402,6 +615,9 @@ class ThreeCAnalysisOrchestrator:
                         state[key] = result[key]
             
             logger.info("Trend analysis completed successfully")
+            
+            # Track workflow metrics
+            await self._track_workflow_metrics(state, "trend_analysis")
             
             if self.websocket_manager and self.job_id:
                 await self.websocket_manager.send_status_update(
@@ -464,6 +680,9 @@ class ThreeCAnalysisOrchestrator:
             state['messages'] = messages
             
             logger.info("Opportunity analysis completed successfully")
+            
+            # Track workflow metrics
+            await self._track_workflow_metrics(state, "opportunity_analysis")
             
             if self.websocket_manager and self.job_id:
                 await self.websocket_manager.send_status_update(
@@ -538,11 +757,14 @@ class ThreeCAnalysisOrchestrator:
             
             logger.info("Results synthesis completed successfully")
             
+            # Track workflow metrics
+            await self._track_workflow_metrics(state, "synthesis")
+            
             if self.websocket_manager and self.job_id:
                 await self.websocket_manager.send_status_update(
                     job_id=self.job_id,
-                    status="completed",
-                    message="3C Analysis workflow completed successfully",
+                    status="processing",
+                    message="Results synthesis completed",
                     result={
                         "step": "Synthesis",
                         "status": "completed",
@@ -718,6 +940,9 @@ class ThreeCAnalysisOrchestrator:
             
             logger.info(f"Final report generated successfully ({len(report_content)} characters)")
             
+            # Track workflow metrics
+            await self._track_workflow_metrics(state, "report_generation")
+            
             if self.websocket_manager and self.job_id:
                 await self.websocket_manager.send_status_update(
                     job_id=self.job_id,
@@ -768,6 +993,105 @@ Please check system logs for detailed error information.
         
         return state
     
+    async def _track_workflow_metrics(self, state: MarketResearchState, stage: str):
+        """Track comprehensive workflow metrics for production monitoring"""
+        try:
+            job_id = self.job_id or "unknown"
+            target_market = state.get('target_market', 'unknown')
+            
+            # Track stage completion
+            performance_monitor.record_metric(
+                f"workflow_stage_{stage}_completed",
+                1,
+                {
+                    "job_id": job_id,
+                    "target_market": target_market,
+                    "stage": stage
+                }
+            )
+            
+            # Track data quality metrics
+            if stage == "data_curation":
+                curated_data = state.get('curated_market_data', {})
+                quality_score = curated_data.get('quality_score', 0)
+                performance_monitor.record_metric(
+                    "data_quality_score",
+                    quality_score,
+                    {"job_id": job_id, "target_market": target_market}
+                )
+            
+            # Track analysis completeness
+            if stage == "consumer_analysis":
+                consumer_insights = state.get('consumer_insights', {})
+                insights_count = len(consumer_insights.get('structured_insights', []))
+                performance_monitor.record_metric(
+                    "consumer_insights_count",
+                    insights_count,
+                    {"job_id": job_id, "target_market": target_market}
+                )
+            
+            if stage == "trend_analysis":
+                market_trends = state.get('market_trends', {})
+                trends_count = len(market_trends.get('structured_trends', []))
+                performance_monitor.record_metric(
+                    "market_trends_count",
+                    trends_count,
+                    {"job_id": job_id, "target_market": target_market}
+                )
+            
+            # Track opportunity identification
+            if stage == "opportunity_analysis":
+                opportunities = state.get('opportunities', [])
+                white_spaces = state.get('white_spaces', [])
+                performance_monitor.record_metric(
+                    "opportunities_identified",
+                    len(opportunities),
+                    {"job_id": job_id, "target_market": target_market}
+                )
+                performance_monitor.record_metric(
+                    "white_spaces_identified",
+                    len(white_spaces),
+                    {"job_id": job_id, "target_market": target_market}
+                )
+            
+            # Track report generation
+            if stage == "report_generation":
+                report = state.get('report', '')
+                performance_monitor.record_metric(
+                    "report_length_characters",
+                    len(report),
+                    {"job_id": job_id, "target_market": target_market}
+                )
+                
+                # Track report quality indicators
+                report_quality_score = self._assess_report_quality(report)
+                performance_monitor.record_metric(
+                    "report_quality_score",
+                    report_quality_score,
+                    {"job_id": job_id, "target_market": target_market}
+                )
+            
+        except Exception as e:
+            logger.warning(f"Failed to track workflow metrics for stage {stage}: {e}")
+    
+    def _assess_report_quality(self, report: str) -> float:
+        """Assess report quality based on content analysis"""
+        if not report:
+            return 0.0
+        
+        quality_indicators = [
+            ('# 3C Analysis Report' in report, 0.2),  # Has proper header
+            ('Executive Summary' in report, 0.15),     # Has executive summary
+            ('Consumer Analysis' in report, 0.15),     # Has consumer section
+            ('Market Trends' in report, 0.15),         # Has trends section
+            ('Market Opportunities' in report, 0.15),  # Has opportunities section
+            (len(report) > 2000, 0.1),                 # Substantial content
+            ('Source:' in report, 0.1)                 # Has source attribution
+        ]
+        
+        score = sum(weight for condition, weight in quality_indicators if condition)
+        return min(score, 1.0)  # Cap at 1.0
+    
     def _get_market_keywords(self, target_market: str) -> List[str]:
         """Get market-specific keywords for enhanced search"""
         if target_market == 'japanese_curry':
@@ -804,7 +1128,15 @@ Please check system logs for detailed error information.
         elif 'opportunities' in state:
             return "opportunity_analysis"
         elif 'market_trends' in state and 'consumer_insights' in state:
-            return "parallel_analysis"
+            return "analysis_complete"
+        elif 'market_trends' in state:
+            return "trend_analysis"
+        elif 'consumer_insights' in state:
+            return "consumer_analysis"
+        elif 'curated_market_data' in state:
+            return "data_curation"
+        elif 'raw_market_data' in state:
+            return "data_collection"
         elif 'market_queries' in state:
             return "query_generation"
         else:
@@ -813,9 +1145,13 @@ Please check system logs for detailed error information.
     def _calculate_progress(self, state: Dict[str, Any]) -> float:
         """Calculate workflow progress percentage"""
         completed_steps = 0
-        total_steps = 6  # query_generation, consumer_analysis, trend_analysis, opportunity_analysis, synthesis, report_generation
+        total_steps = 8  # query_generation, data_collection, data_curation, consumer_analysis, trend_analysis, opportunity_analysis, synthesis, report_generation
         
         if 'market_queries' in state:
+            completed_steps += 1
+        if 'raw_market_data' in state:
+            completed_steps += 1
+        if 'curated_market_data' in state:
             completed_steps += 1
         if 'consumer_insights' in state:
             completed_steps += 1
