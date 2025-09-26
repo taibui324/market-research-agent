@@ -27,12 +27,12 @@ class Curator:
                         "step": "Curation",
                     }
                 )
-        
+
         if not docs:
             return []
 
         logger.info(f"Evaluating {len(docs)} documents")
-        
+
         evaluated_docs = []
         try:
             # Evaluate each document using Tavily's score
@@ -40,11 +40,11 @@ class Curator:
                 try:
                     # Ensure score is a valid float
                     tavily_score = float(doc.get('score', 0))  # Default to 0 if no score
-                    
+
                     # Keep documents with good Tavily score
                     if tavily_score >= self.relevance_threshold:
                         logger.info(f"Document passed threshold with score {tavily_score:.4f} for '{doc.get('title', 'No title')}'")
-                        
+
                         evaluated_doc = {
                             **doc,
                             "evaluation": {
@@ -53,7 +53,7 @@ class Curator:
                             }
                         }
                         evaluated_docs.append(evaluated_doc)
-                        
+
                         # Send incremental update for kept document
                         if websocket_manager := state.get('websocket_manager'):
                             if job_id := state.get('job_id'):
@@ -73,7 +73,7 @@ class Curator:
                 except (ValueError, TypeError) as e:
                     logger.warning(f"Error processing score for document: {e}")
                     continue
-                    
+
         except Exception as e:
             logger.error(f"Error during document evaluation: {e}")
             return []
@@ -81,14 +81,17 @@ class Curator:
         # Sort evaluated docs by score before returning
         evaluated_docs.sort(key=lambda x: float(x['evaluation']['overall_score']), reverse=True)
         logger.info(f"Returning {len(evaluated_docs)} evaluated documents")
-        
+
         return evaluated_docs
 
     async def curate_data(self, state: ResearchState) -> ResearchState:
-        """Curate all collected data based on Tavily scores."""
+        """Curate all collected data based on its relevance to our objective
+            Key Questions: What are competitors' product directions? What technologies are they leveraging?
+            Expected Outputs: Competitive positioning maps, feature comparison matrices, white space opportunity identification
+                ."""
         company = state.get('company', 'Unknown Company')
         logger.info(f"Starting curation for company: {company}")
-        
+
         # Send initial status update through WebSocket
         if websocket_manager := state.get('websocket_manager'):
             if job_id := state.get('job_id'):
@@ -116,7 +119,7 @@ class Curator:
         }
 
         msg = [f"🔍 Curating research data for {company}"]
-        
+
         data_types = {
             'financial_data': ('💰 Financial', 'financial'),
             'news_data': ('📰 News', 'news'),
@@ -178,7 +181,7 @@ class Curator:
             # Filter and sort by Tavily score
             relevant_docs = {url: doc for url, doc in zip(urls, evaluated_docs)}
             sorted_items = sorted(relevant_docs.items(), key=lambda item: item[1]['evaluation']['overall_score'], reverse=True)
-            
+
             # Limit to top 30 documents per category
             if len(sorted_items) > 30:
                 sorted_items = sorted_items[:30]
@@ -198,11 +201,11 @@ class Curator:
 
             # Store curated documents in state
             state[f'curated_{data_field}'] = relevant_docs
-            
+
         # Process references using the references module
         top_reference_urls, reference_titles, reference_info = process_references_from_search_results(state)
         logger.info(f"Selected top {len(top_reference_urls)} references for the report")
-        
+
         # Update state with references and their titles
         messages = state.get('messages', [])
         messages.append(AIMessage(content="\n".join(msg)))

@@ -187,7 +187,9 @@ class Editor:
                             "report": final_report,
                             "company": company,
                             "is_final": True,
-                            "status": "completed"
+                            "status": "completed",
+                            "report_content": final_report,
+                            "competitor_analyses": state.get("competitor_analyses", {})
                         }
                     )
             

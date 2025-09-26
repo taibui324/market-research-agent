@@ -1,0 +1,22 @@
+[project]
+name = "ai-challenge-market-research"
+version = "0.1.0"
+description = "Market research agent"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "fastmcp>=2.12.3",
+    "fastapi[standard]",
+    "openai-agents>=0.3.1",
+    "python-dotenv>=1.1.1",
+    "langchain-core",
+    "langgraph",
+    "openai",    
+    "pymongo",
+    "reportlab",
+    "uvicorn[standard]",
+    "websockets",
+    "google-generativeai",
+    "tavily-python"
+
+]
