@@ -69,7 +69,7 @@ const CompetitorAnalysisComponent: React.FC<CompetitorAnalysisProps> = ({
     
     // Parse data rows
     const criteria = [];
-    const scores = {};
+    const scores: { [company: string]: { [criterion: string]: string } } = {};
     
     for (let i = 1; i < lines.length; i++) {
       const row = lines[i].split('|').map(cell => cell.trim()).filter(cell => cell);
