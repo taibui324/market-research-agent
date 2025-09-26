@@ -73,7 +73,8 @@ const CompetitorAnalysisComponent: React.FC<CompetitorAnalysisProps> = ({
     
     for (let i = 1; i < lines.length; i++) {
       const row = lines[i].split('|').map(cell => cell.trim()).filter(cell => cell);
-      if (row.length > 1) {
+      // Skip markdown table separator lines (lines with only dashes, spaces, and pipes)
+      if (row.length > 1 && !lines[i].match(/^[\s\|\-\:]+$/)) {
         const criterion = row[0];
         criteria.push(criterion);
         
