@@ -11,7 +11,6 @@ from googleapiclient.discovery import build
 import aiohttp
 from bs4 import BeautifulSoup
 from ..classes import InputState, ResearchState
-from langchain_perplexity import ChatPerplexity
 
 logger = logging.getLogger(__name__)
 
@@ -23,70 +22,41 @@ DEFAULT_USER_AGENT = (
 
 
 class GroundingNode:
-    """Gathers initial grounding data about the main company and its competitors using Google CSE or Perplexity."""
+    """Gathers initial grounding data about the main company and its competitors using Google CSE."""
 
-    def __init__(self, search_provider: str = "perplexity") -> None:
-        """
-        Initialize the GroundingNode with either Google CSE or Perplexity search.
-        
-        Args:
-            search_provider: Either "google" or "perplexity"
-        """
-        self.search_provider = search_provider.lower()
+    def __init__(self) -> None:
+        # Get Google API credentials
+        self.google_api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GOOGLE_KEY")
+        self.google_cx = (
+            os.getenv("GOOGLE_CX") or os.getenv("CSX_ENGINE") or os.getenv("CSE_ID")
+        )
 
-        if self.search_provider == "google":
-            # Get Google API credentials
-            self.google_api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GOOGLE_KEY")
-            self.google_cx = (
-                os.getenv("GOOGLE_CX") or os.getenv("CSX_ENGINE") or os.getenv("CSE_ID")
+        if not self.google_api_key or not self.google_cx:
+            raise ValueError(
+                "Missing GOOGLE_API_KEY and GOOGLE_CX environment variables"
             )
 
-            if not self.google_api_key or not self.google_cx:
-                raise ValueError(
-                    "Missing GOOGLE_API_KEY and GOOGLE_CX environment variables"
-                )
-
-            # Initialize Google Custom Search service
-            self.search_service = build(
-                "customsearch", "v1", developerKey=self.google_api_key
-            )
-
-        elif self.search_provider == "perplexity":
-            # Get Perplexity API credentials
-            self.perplexity_api_key = os.getenv("PERPLEXITY_API_KEY")
-
-            if not self.perplexity_api_key:
-                raise ValueError(
-                    "Missing PERPLEXITY_API_KEY environment variable"
-                )
-
-            # LangChain client for Perplexity
-            self.perplexity_llm = ChatPerplexity(
-                model="sonar",
-                api_key=self.perplexity_api_key,
-                temperature=0.1,
-                max_tokens=2000,
-            )
-        else:
-            raise ValueError("search_provider must be either 'google' or 'perplexity'")
+        # Initialize Google Custom Search service
+        self.search_service = build(
+            "customsearch", "v1", developerKey=self.google_api_key
+        )
 
     def normalize_ws(self, s: str) -> str:
         """Normalize whitespace in text"""
         return re.sub(r"\s+", " ", s or "").strip()
-
+    
     def generate_structured_queries(
         self,
         company: str,
         company_url: str = None,
-        competitors: List[Dict[str, str]] = None,
-        product_category: str = None
+        competitors: List[Dict[str, str]] = None
     ) -> Tuple[List[str], Dict[str, str]]:
         """Generate structured queries for comprehensive company & competitor analysis"""
         queries = []
         query_to_area = {}  # Map query to analysis area
-
+        
         company_quoted = f'"{company}"'
-
+        
         # Define analysis areas
         analysis_areas = [
             {
@@ -120,66 +90,110 @@ class GroundingNode:
                 "keywords": ["market gap", "unmet needs", "white space", "opportunity identification", "differentiation"]
             }
         ]
-
+        
         # Generate queries for the main company
         for area in analysis_areas:
             topic = area["topic"]
             keywords = area["keywords"]
-
+            
             # Comprehensive query
             query = f"{company_quoted} {' '.join(keywords)}"
             queries.append(query)
             query_to_area[query] = topic
-
+            
             # More specific query
             specific_query = f"{company_quoted} {topic.replace('_', ' ')} {' '.join(keywords[:2])}"
             queries.append(specific_query)
             query_to_area[specific_query] = topic
-
-            # Product category specific queries if available
-            if product_category:
-                # Product category focused query
-                product_query = f"{company_quoted} {product_category} {' '.join(keywords)}"
-                queries.append(product_query)
-                query_to_area[product_query] = f"{topic}_product_focused"
-
-                # Product category + topic specific query
-                product_specific_query = f"{company_quoted} {product_category} {topic.replace('_', ' ')}"
-                queries.append(product_specific_query)
-                query_to_area[product_specific_query] = f"{topic}_product_specific"
-
+        
         # Generate queries for competitors (focused areas only)
         if competitors:
             for comp in competitors:
                 comp_name = comp.get("company")
                 comp_quoted = f'"{comp_name}"'
-                comp_product_category = comp.get("product_category")
-
+                
                 for area in ["product_direction", "technologies", "market_position"]:
                     keywords = next(
                         (a["keywords"] for a in analysis_areas if a["topic"] == area),
                         []
                     )
-
+                    
                     query = f"{comp_quoted} {' '.join(keywords)}"
                     queries.append(query)
                     query_to_area[query] = f"competitor_{area}"
-
+                    
                     specific_query = f"{comp_quoted} {area.replace('_', ' ')} {' '.join(keywords[:2])}"
                     queries.append(specific_query)
                     query_to_area[specific_query] = f"competitor_{area}"
-
-                    # Competitor product category specific queries if available
-                    if comp_product_category:
-                        comp_product_query = f"{comp_quoted} {comp_product_category} {' '.join(keywords)}"
-                        queries.append(comp_product_query)
-                        query_to_area[comp_product_query] = f"competitor_{area}_product_focused"
-
-                        comp_product_specific_query = f"{comp_quoted} {comp_product_category} {area.replace('_', ' ')}"
-                        queries.append(comp_product_specific_query)
-                        query_to_area[comp_product_specific_query] = f"competitor_{area}_product_specific"
-
+        
         return queries, query_to_area
+
+
+    # def generate_structured_queries(self, company: str, company_url: str = None) -> Tuple[List[str], Dict[str, str]]:
+    #     """Generate structured queries for comprehensive company analysis"""
+    #     queries = []
+    #     query_to_area = {}  # Map query to analysis area
+        
+    #     # Base company name for queries
+    #     company_quoted = f'"{company}"'
+        
+    #     # Remove site-specific constraint to allow broader web searches
+    #     # This enables finding information from news, reports, analyst coverage, etc.
+        
+    #     # Define analysis areas
+    #     analysis_areas = [
+    #         {
+    #             "topic": "product_offerings",
+    #             "display_name": "Product Offerings",
+    #             "keywords": ["products", "services", "offerings", "solutions", "portfolio", "catalog"]
+    #         },
+    #         {
+    #             "topic": "product_direction", 
+    #             "display_name": "Product Direction",
+    #             "keywords": ["product roadmap", "future products", "innovation", "R&D", "development", "strategy"]
+    #         },
+    #         {
+    #             "topic": "strategic_direction",
+    #             "display_name": "Strategic Direction", 
+    #             "keywords": ["strategy", "strategic plan", "business strategy", "vision", "mission", "goals"]
+    #         },
+    #         {
+    #             "topic": "strengths",
+    #             "display_name": "Strengths",
+    #             "keywords": ["strengths", "advantages", "competitive advantages", "core competencies", "capabilities"]
+    #         },
+    #         {
+    #             "topic": "weaknesses", 
+    #             "display_name": "Weaknesses",
+    #             "keywords": ["weaknesses", "challenges", "limitations", "risks", "vulnerabilities"]
+    #         },
+    #         {
+    #             "topic": "market_position",
+    #             "display_name": "Market Position",
+    #             "keywords": ["market position", "market share", "competitive position", "industry leadership", "market analysis"]
+    #         }
+    #     ]
+        
+    #     # Generate queries for each analysis area
+    #     for area in analysis_areas:
+    #         topic = area["topic"]
+    #         display_name = area["display_name"]
+    #         keywords = area["keywords"]
+            
+    #         # Create a comprehensive query for this area
+    #         query_parts = [company_quoted]
+    #         query_parts.extend(keywords)
+            
+    #         query = f"{' '.join(query_parts)}"
+    #         queries.append(query)
+    #         query_to_area[query] = topic
+            
+    #         # Add a more specific query for each area
+    #         specific_query = f"{company_quoted} {topic.replace('_', ' ')} {' '.join(keywords[:2])}"
+    #         queries.append(specific_query)
+    #         query_to_area[specific_query] = topic
+        
+    #     return queries, query_to_area
 
     def google_cse_search(
         self, query: str, max_results: int = 10
@@ -212,82 +226,6 @@ class GroundingNode:
                 break
 
         return items
-
-    async def perplexity_search(
-        self, query: str, max_results: int = 10
-    ) -> List[Dict[str, Any]]:
-        """Search using Perplexity via LangChain integration"""
-        items: List[Dict[str, Any]] = []
-
-        try:
-            # Build user message with more specific instructions
-            user_prompt = f"""Search and provide comprehensive information about: {query}
-
-Please include:
-- Relevant URLs and sources
-- Brief descriptions of key findings
-- Recent and authoritative information
-- Focus on business, products, and market information
-
-Format your response with clear URLs and descriptions."""
-
-            # Call Perplexity LLM
-            resp = await self.perplexity_llm.ainvoke(user_prompt)
-            content = resp.content if hasattr(resp, "content") else str(resp)
-
-            logger.info(f"Perplexity response length: {len(content)}")
-
-            # Extract URLs with better regex
-            url_pattern = r'https?://(?:[-\w.])+(?:[:\d]+)?(?:/(?:[\w/_.])*(?:\?(?:[\w&=%.])*)?(?:#(?:[\w.])*)?)?'
-            urls = re.findall(url_pattern, content)
-
-            # Remove duplicates while preserving order
-            seen_urls = set()
-            unique_urls = []
-            for url in urls:
-                if url not in seen_urls:
-                    seen_urls.add(url)
-                    unique_urls.append(url)
-
-            logger.info(f"Found {len(unique_urls)} URLs in Perplexity response")
-
-            # Create search result items
-            for i, url in enumerate(unique_urls[:max_results]):
-                # Try to extract title from content around the URL
-                title_match = re.search(
-                    rf'([^.\n]{{10,100}})\.?\s*{re.escape(url)}',
-                    content,
-                    re.IGNORECASE,
-                )
-                title = title_match.group(1).strip() if title_match else f"Result {i+1}"
-
-                # Extract snippet from content around the URL
-                snippet_start = max(0, content.find(url) - 100)
-                snippet_end = min(len(content), content.find(url) + 200)
-                snippet = content[snippet_start:snippet_end].strip()
-
-                items.append({
-                    "title": title,
-                    "link": url,
-                    "snippet": snippet,
-                    "displayLink": urlparse(url).netloc
-                })
-
-        except Exception as e:
-            logger.error(f"LangChain Perplexity search error: {e}")
-
-        return items
-
-    async def search_with_provider(
-        self, query: str, max_results: int = 10
-    ) -> List[Dict[str, Any]]:
-        """Search using the configured search provider"""
-        if self.search_provider == "google":
-            return self.google_cse_search(query, max_results)
-        elif self.search_provider == "perplexity":
-            return await self.perplexity_search(query, max_results)
-        else:
-            raise ValueError(f"Unsupported search provider: {self.search_provider}")
 
     async def fetch_html(
         self, session: aiohttp.ClientSession, url: str
@@ -342,44 +280,41 @@ Format your response with clear URLs and descriptions."""
         company_type: str,
         websocket_manager=None,
         job_id=None,
-        product_category: str = None,
     ) -> dict:
-        """Search for and scrape company information using structured queries"""
+        """Search for and scrape company information using structured Google CSE queries"""
         site_scrape = {}
         msg = f"🔍 Analyzing {company_type} website: {company}"
-        logger.info(f"Starting structured analysis for {company} using {self.search_provider}")
+        logger.info(f"Starting structured Google CSE analysis for {company}")
 
         if websocket_manager and job_id:
             await websocket_manager.send_status_update(
                 job_id=job_id,
                 status="processing",
-                message=f"Searching for {company} information using {self.search_provider}",
+                message=f"Searching for {company} information",
                 result={
                     "step": "Site Scrape",
                     "company": company,
                     "type": company_type,
-                    "search_provider": self.search_provider,
                 },
             )
 
         try:
             # Generate structured queries with area mapping
-            queries, query_to_area = self.generate_structured_queries(company, company_url, product_category=product_category)
+            queries, query_to_area = self.generate_structured_queries(company, company_url)
             logger.info(f"Generated {len(queries)} structured queries for {company}")
 
             # Search for relevant pages using all queries
             all_search_results = []
             query_results = {}  # Track results by query
-
+            
             for i, query in enumerate(queries):
-                if i == 0:
-                    logger.info(f"Query {i+1}/{len(queries)}: {query}")
-                    search_results = await self.search_with_provider(query, max_results=1)
-                    all_search_results.extend(search_results)
-                    query_results[query] = search_results
-
-                    # Small delay between queries to avoid rate limiting
-                    await asyncio.sleep(1)  # Increased delay for Perplexity
+                logger.info(f"Query {i+1}/{len(queries)}: {query}")
+                search_results = self.google_cse_search(query, max_results=3)
+                all_search_results.extend(search_results)
+                query_results[query] = search_results
+                
+                # Small delay between queries to avoid rate limiting
+                await asyncio.sleep(0.5)
 
             if not all_search_results:
                 logger.warning(f"No search results found for {company}")
@@ -460,7 +395,7 @@ Format your response with clear URLs and descriptions."""
         except Exception as e:
             error_str = str(e)
             logger.error(
-                f"Search error for {company} using {self.search_provider}: {error_str}", exc_info=True
+                f"Google CSE search error for {company}: {error_str}", exc_info=True
             )
             error_msg = f"⚠️ Error searching for {company}: {error_str}"
             msg += f"\n{error_msg}"
@@ -491,23 +426,23 @@ Format your response with clear URLs and descriptions."""
             "weaknesses": {"content": [], "sources": []},
             "market_position": {"content": [], "sources": []},
         }
-
+        
         # For now, we'll distribute content across all areas since we can't easily map
         # which content came from which specific query after scraping
         # In a more sophisticated implementation, you could track this during scraping
-
+        
         for item in scraped_content:
             content_piece = {
                 "url": item["url"],
                 "title": item["title"],
                 "content": item["content"][:5000] + "..." if len(item["content"]) > 5000 else item["content"]  # Truncate long content
             }
-
+            
             # Add to all areas for now - in practice you might want to use NLP to categorize
             for area in organized:
                 organized[area]["content"].append(content_piece)
                 organized[area]["sources"].append(item["url"])
-
+        
         return organized
 
     async def crawl_company_website(
@@ -518,7 +453,7 @@ Format your response with clear URLs and descriptions."""
         websocket_manager=None,
         job_id=None,
     ) -> dict:
-        """Crawl a single company's website and extract relevant data"""
+        """Crawl a single company's website and extract relevant data using Google CSE"""
         return await self.search_and_scrape_company(
             company, url, company_type, websocket_manager, job_id
         )
@@ -531,7 +466,6 @@ Format your response with clear URLs and descriptions."""
         url = company_data.get("company_url")
         hq_location = company_data.get("hq_location", "Unknown")
         industry = company_data.get("industry", "Unknown")
-        product_category = company_data.get("product_category", "Unknown")
 
         company_type = "main company" if is_main else "competitor"
         msg = f"🎯 Processing {company_type}: {company}...\n"
@@ -552,7 +486,7 @@ Format your response with clear URLs and descriptions."""
 
         # Always attempt to search and scrape (even without URL)
         site_scrape, crawl_msg = await self.search_and_scrape_company(
-            company, url, company_type, websocket_manager, job_id, product_category
+            company, url, company_type, websocket_manager, job_id
         )
         msg += f"\n{crawl_msg}"
 
@@ -561,7 +495,6 @@ Format your response with clear URLs and descriptions."""
             "company_url": url,
             "hq_location": hq_location,
             "industry": industry,
-            "product_category": product_category,
             "site_scrape": site_scrape,
             "message": msg,
             "is_main": is_main,
@@ -576,19 +509,18 @@ Format your response with clear URLs and descriptions."""
         competitors = state.get("competitors", [])
 
         logger.info(
-            f"Processing main company: {main_company} with {len(competitors)} competitors using {self.search_provider}"
+            f"Processing main company: {main_company} with {len(competitors)} competitors"
         )
 
         if websocket_manager and job_id:
             await websocket_manager.send_status_update(
                 job_id=job_id,
                 status="processing",
-                message=f"🎯 Initiating research for {main_company} and {len(competitors)} competitors using {self.search_provider}",
+                message=f"🎯 Initiating research for {main_company} and {len(competitors)} competitors",
                 result={
                     "step": "Initializing",
                     "main_company": main_company,
                     "competitors_count": len(competitors),
-                    "search_provider": self.search_provider,
                 },
             )
 
@@ -601,7 +533,6 @@ Format your response with clear URLs and descriptions."""
             "company_url": state.get("company_url"),
             "hq_location": state.get("hq_location"),
             "industry": state.get("industry"),
-            "product_category": state.get("product_category"),
         }
         all_companies.append((main_company_data, True))  # (data, is_main)
 
@@ -644,7 +575,6 @@ Format your response with clear URLs and descriptions."""
         if competitors:
             competitor_names = [c["company"] for c in competitors]
             combined_msg += f"🏢 Competitors: {', '.join(competitor_names)}\n"
-        combined_msg += f"🔍 Search Provider: {self.search_provider}\n"
         combined_msg += "\n" + "\n".join(all_messages)
 
         # Separate main company and competitors data
@@ -662,7 +592,6 @@ Format your response with clear URLs and descriptions."""
                 "company_url": main_result["company_url"],
                 "hq_location": main_result["hq_location"],
                 "industry": main_result["industry"],
-                "product_category": main_result["product_category"],
                 "site_scrape": main_result["site_scrape"],
                 "is_main": True,
                 "is_competitor": False,
@@ -676,7 +605,6 @@ Format your response with clear URLs and descriptions."""
                 "company_url": competitor_result["company_url"],
                 "hq_location": competitor_result["hq_location"],
                 "industry": competitor_result["industry"],
-                "product_category": competitor_result["product_category"],
                 "site_scrape": competitor_result["site_scrape"],
                 "is_main": False,
                 "is_competitor": True,
@@ -689,7 +617,6 @@ Format your response with clear URLs and descriptions."""
             "company_url": state.get("company_url"),
             "hq_location": state.get("hq_location"),
             "industry": state.get("industry"),
-            "product_category": state.get("product_category"),
             "competitors": competitors,
             "websocket_manager": websocket_manager,
             "job_id": job_id,
@@ -718,7 +645,7 @@ Format your response with clear URLs and descriptions."""
         }
 
         logger.info(
-            f"Successfully initialized research state for {main_company} and {len(competitors)} competitors using {self.search_provider}"
+            f"Successfully initialized research state for {main_company} and {len(competitors)} competitors"
         )
 
         # Save logs
@@ -727,7 +654,6 @@ Format your response with clear URLs and descriptions."""
                 {
                     "step": "Grounding",
                     "job_id": job_id,
-                    "search_provider": self.search_provider,
                     "main_company": main_result,
                     "competitors": competitors_data,
                     "research_state": research_state,

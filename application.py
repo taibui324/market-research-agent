@@ -20,7 +20,26 @@ from backend.nodes.orchestrator import ThreeCAnalysisOrchestrator
 from backend.services.mongodb import MongoDBService
 from backend.services.pdf_service import PDFService
 from backend.services.websocket_manager import WebSocketManager
+
 import json
+
+
+def make_json_serializable(obj):
+    """Recursively remove/convert non-serializable objects."""
+    if isinstance(obj, dict):
+        return {
+            k: make_json_serializable(v)
+            for k, v in obj.items()
+            if k != "websocket_manager"
+        }
+    elif isinstance(obj, list):
+        return [make_json_serializable(v) for v in obj]
+    try:
+        json.dumps(obj)  # test serialization
+        return obj
+    except (TypeError, OverflowError):
+        return str(obj)  # fallback to string
+
 
 # Load environment variables from .env file at startup
 env_path = Path(__file__).parent / '.env'
@@ -65,12 +84,15 @@ class CompetitorData(BaseModel):
     company: str
     company_url: Optional[str] = None
     hq_location: Optional[str] = None
+    industry: Optional[str] = None
+    product_category: Optional[str] = None
 
 class ResearchRequest(BaseModel):
     company: str
     company_url: Optional[str] = None
     industry: Optional[str] = None
     hq_location: Optional[str] = None
+    product_category: Optional[str] = None
     competitors: List[CompetitorData] = []
 
 class MarketResearchRequest(BaseModel):
@@ -182,6 +204,7 @@ async def process_research(job_id: str, data: ResearchRequest):
             company_url=data.company_url,
             industry=data.industry,
             hq_location=data.hq_location,
+            product_category=data.product_category,
             competitors=[competitor.dict() for competitor in data.competitors],
             websocket_manager=manager,
             job_id=job_id
@@ -199,39 +222,30 @@ async def process_research(job_id: str, data: ResearchRequest):
         # Save the final report to database if we have the state
         if mongodb and final_state:
             try:
+                clean_state = make_json_serializable(final_state)
+
                 # Debug: Log the available keys in the final state
-                logger.info(f"Final state keys: {list(final_state['swot'].keys())}")
-
-                # Remove non-serializable objects from state for logging
-                logger.info(f"Final state: {final_state}")
-
-                # Extract the report data from the correct keys in the final state
-                # The SWOT analysis is stored in swot_analyses, not in swot.report_content
-
-                # Get the SWOT analysis from the correct location
-                swot_analyses = final_state["swot"]["swot_analyses"]
-                companies_data = final_state["swot"]["companies_data"]
-
-                # Extract the main company's SWOT analysis as the report content
-                main_company = data.company
-                # report_content = swot_analyses.get(main_company, "")
-
-                # Debug: Log the extracted values
-                # logger.info(f"Extracted report_content length: {len(swot_analyses)}")
-                # logger.info(f"Extracted swot_analyses: {swot_analyses}")
-                # logger.info(f"Extracted companies_data: {companies_data}")
-
-                # Prepare report data for database storage
-                report_data = {
-                    "report_content": swot_analyses,                    
-                    "companies_data": companies_data,
-                    "main_company": data.company,
-                    "competitors": [c.dict() for c in data.competitors],
-                    "report_type": "competitive_analysis",
-                }
+                logger.info(f"Final state keys: {list(final_state.keys())}")
 
                 # Store the report in the database
-                mongodb.store_report(job_id, report_data)
+                # Extract the report content and competitor analysis data
+                report_content = final_state.get("report", "")
+                competitor_analyses = final_state.get("competitor_analyses", {})
+                swot_analyses = final_state.get("swot_analyses", {})
+                companies_data = final_state.get("companies_data", {})
+                
+                # Store the final report with all data
+                mongodb.store_report(
+                    job_id=job_id,
+                    report_content=report_content,
+                    report_competitor_analyses=competitor_analyses,
+                    report_main_company=data.company,
+                    report_competitors=[c.dict() for c in data.competitors],
+                    report_industry=data.industry,
+                    report_hq_location=data.hq_location,
+                    report_product_category=data.product_category,
+                    report_type="competitive_analysis"
+                )
                 logger.info(f"Successfully saved report to database for job {job_id}")
 
             except Exception as e:
@@ -253,11 +267,8 @@ async def process_research(job_id: str, data: ResearchRequest):
         # Extract data from the database
         report_content = report_data.get("report_content", "")
         swot_analyses = report_data.get("swot_analyses", {})
+        competitor_analyses = report_data.get("competitor_analyses", {})
         companies_data = report_data.get("companies_data", {})
-
-        # logger.info(f"Report content length: {len(report_content)}")
-        # logger.info(f"SWOT analyses count: {len(swot_analyses)}")
-        # logger.info(f"Companies data count: {len(companies_data)}")
 
         if not report_content:
             raise Exception("No report content found in database")
@@ -269,6 +280,7 @@ async def process_research(job_id: str, data: ResearchRequest):
         job_status[job_id]["result"] = {
             "report_content": report_content,
             "swot_analyses": swot_analyses,
+            "competitor_analyses": competitor_analyses,
             "companies_analyzed": list(companies_data.keys()),
             "main_company": data.company,
             "competitors": [c.company for c in data.competitors]
@@ -620,6 +632,7 @@ async def get_research_report(job_id: str):
         # Extract data from the database
         report_content = report_data.get("report_content", "")
         swot_analyses = report_data.get("swot_analyses", {})
+        competitor_analyses = report_data.get("competitor_analyses", {})
         companies_data = report_data.get("companies_data", {})
         main_company = report_data.get("main_company")
         competitors = report_data.get("competitors", [])
@@ -632,6 +645,7 @@ async def get_research_report(job_id: str):
             "status": "completed",
             "report_content": report_content,
             "swot_analyses": swot_analyses,
+            "competitor_analyses": competitor_analyses,
             "companies_analyzed": list(companies_data.keys()),
             "main_company": main_company,
             "competitors": competitors,

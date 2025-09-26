@@ -70,17 +70,28 @@ class MongoDBService:
             return self._convert_objectid_to_str(job)
         return None
 
-    def store_report(self, job_id: str, report_data: Dict[str, Any]) -> None:
-        """Store the finalized research report with SWOT analyses."""
+    def store_report(self, job_id: str, 
+                    report_competitor_analyses: Dict[str, Any] = None,
+                    report_main_company: str = None,
+                    report_competitors: list = None,
+                    report_industry: str = None,
+                    report_hq_location: str = None,
+                    report_product_category: str = None,
+                    report_type: str = "competitive_analysis",
+                    report_created_at: str = None,
+                    report_content: str = None) -> None:
+        """Store the finalized research report with competitor analyses."""
         self.reports.insert_one({
             "job_id": job_id,
-            "report_content": report_data.get("report_content", ""),
-            "swot_analyses": report_data.get("swot_analyses", {}),
-            "companies_data": report_data.get("companies_data", {}),
-            "main_company": report_data.get("main_company"),
-            "competitors": report_data.get("competitors", []),
-            "report_type": report_data.get("report_type", "competitive_analysis"),
-            "created_at": datetime.utcnow()
+            "report_content": report_content or "",
+            "competitor_analyses": report_competitor_analyses or {},
+            "main_company": report_main_company,
+            "competitors": report_competitors or [],
+            "industry": report_industry,
+            "hq_location": report_hq_location,
+            "product_category": report_product_category,
+            "report_type": report_type,
+            "created_at": datetime.now()
         })
 
     def save_swot_analysis(self, job_id: str, swot_content: str, company: str = None) -> None:

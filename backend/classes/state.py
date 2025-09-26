@@ -15,6 +15,8 @@ class CompetitorData(TypedDict, total=False):
     company: Required[str]
     company_url: NotRequired[str]
     hq_location: NotRequired[str]
+    industry: NotRequired[str]
+    product_category: NotRequired[str]
 
 # Main company with competitors structure
 class CompanyWithCompetitors(TypedDict, total=False):
@@ -22,6 +24,7 @@ class CompanyWithCompetitors(TypedDict, total=False):
     company_url: NotRequired[str]
     industry: NotRequired[str]
     hq_location: NotRequired[str]
+    product_category: NotRequired[str]
     competitors: NotRequired[List[CompetitorData]]
 
 # Define the input state for main company with competitors
@@ -30,6 +33,7 @@ class InputState(TypedDict, total=False):
     company_url: NotRequired[str]
     hq_location: NotRequired[str]
     industry: NotRequired[str]
+    product_category: NotRequired[str]
     competitors: NotRequired[List[CompetitorData]]
     websocket_manager: NotRequired[WebSocketManager]
     job_id: NotRequired[str]
@@ -103,6 +107,10 @@ class ResearchState(InputState):
     briefings: Dict[str, Any]
     companies_data: Dict[str, Any]  # Processed company data for SWOT analysis
     swot_analyses: Dict[str, Any]  # SWOT analysis results
+    competitor_analyses: Dict[str, Any]  # Competitor analysis results
+    competitor_analysis_content: str  # Raw competitor analysis content
+    competitor_analysis_structured: Dict[str, Any]  # Structured competitor analysis data
+    competitor_analysis_metrics: Dict[str, Any]  # Competitor analysis metrics
     report: str
 
 class MarketResearchState(ResearchState):

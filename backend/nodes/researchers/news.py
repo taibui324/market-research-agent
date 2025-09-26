@@ -1,15 +1,170 @@
-from typing import Any, Dict
+import os
+import re
+import logging
+from typing import Any, Dict, List
+from urllib.parse import urlparse
 
 from langchain_core.messages import AIMessage
+from langchain_perplexity import ChatPerplexity
 
 from ...classes import ResearchState
 from .base import BaseResearcher
 
+logger = logging.getLogger(__name__)
 
 class NewsScanner(BaseResearcher):
     def __init__(self) -> None:
         super().__init__()
         self.analyst_type = "news_analyzer"
+        
+        # Initialize Perplexity client
+        self.perplexity_api_key = os.getenv("PERPLEXITY_API_KEY")
+        if not self.perplexity_api_key:
+            raise ValueError("Missing PERPLEXITY_API_KEY environment variable")
+        
+        self.perplexity_llm = ChatPerplexity(
+            model="sonar",
+            api_key=self.perplexity_api_key,
+            temperature=0.1,
+            max_tokens=2000,
+        )
+
+    async def perplexity_search(self, query: str, max_results: int = 5) -> Dict[str, Any]:
+        """Search using Perplexity via LangChain integration"""
+        docs = {}
+        
+        try:
+            # Build user message with more specific instructions for news data
+            user_prompt = f"""Search and provide comprehensive recent news information about: {query}
+
+Please include:
+- Relevant URLs and sources
+- Recent news articles, press releases, and announcements
+- Latest company updates and developments
+- Recent partnerships, acquisitions, or strategic moves
+- Focus on current and recent news coverage
+
+Format your response with clear URLs and descriptions."""
+
+            # Call Perplexity LLM
+            resp = await self.perplexity_llm.ainvoke(user_prompt)
+            content = resp.content if hasattr(resp, "content") else str(resp)
+
+            logger.info(f"Perplexity response length: {len(content)}")
+
+            # Extract URLs with better regex
+            url_pattern = r'https?://(?:[-\w.])+(?:[:\d]+)?(?:/(?:[\w/_.])*(?:\?(?:[\w&=%.])*)?(?:#(?:[\w.])*)?)?'
+            urls = re.findall(url_pattern, content)
+
+            # Remove duplicates while preserving order
+            seen_urls = set()
+            unique_urls = []
+            for url in urls:
+                if url not in seen_urls:
+                    seen_urls.add(url)
+                    unique_urls.append(url)
+
+            logger.info(f"Found {len(unique_urls)} URLs in Perplexity response")
+
+            # Create search result items
+            for i, url in enumerate(unique_urls[:max_results]):
+                # Try to extract title from content around the URL
+                title_match = re.search(
+                    rf'([^.\n]{{10,100}})\.?\s*{re.escape(url)}',
+                    content,
+                    re.IGNORECASE,
+                )
+                title = title_match.group(1).strip() if title_match else f"News Result {i+1}"
+
+                # Extract snippet from content around the URL
+                snippet_start = max(0, content.find(url) - 100)
+                snippet_end = min(len(content), content.find(url) + 200)
+                snippet = content[snippet_start:snippet_end].strip()
+
+                docs[url] = {
+                    "title": title,
+                    "content": snippet,
+                    "query": query,
+                    "url": url,
+                    "source": "perplexity_search",
+                    "score": 1.0  # Perplexity doesn't provide scores, so we use 1.0
+                }
+
+        except Exception as e:
+            logger.error(f"Perplexity search error: {e}")
+
+        return docs
+
+    async def search_documents_perplexity(self, state: ResearchState, queries: List[str]) -> Dict[str, Any]:
+        """
+        Execute all Perplexity searches in parallel
+        """
+        websocket_manager = state.get('websocket_manager')
+        job_id = state.get('job_id')
+
+        if not queries:
+            logger.error("No valid queries to search")
+            return {}
+
+        # Send status update for generated queries
+        if websocket_manager and job_id:
+            await websocket_manager.send_status_update(
+                job_id=job_id,
+                status="queries_generated",
+                message=f"Generated {len(queries)} queries for {self.analyst_type}",
+                result={
+                    "step": "Searching",
+                    "analyst": self.analyst_type,
+                    "queries": queries,
+                    "total_queries": len(queries)
+                }
+            )
+
+        if websocket_manager and job_id:
+            await websocket_manager.send_status_update(
+                job_id=job_id,
+                status="search_started",
+                message=f"Using Perplexity to search for {len(queries)} queries",
+                result={
+                    "step": "Searching",
+                    "total_queries": len(queries)
+                }
+            )
+
+        # Execute all Perplexity searches in parallel
+        import asyncio
+        search_tasks = [
+            self.perplexity_search(query, max_results=5)
+            for query in queries
+        ]
+
+        try:
+            results = await asyncio.gather(*search_tasks)
+        except Exception as e:
+            logger.error(f"Error during parallel Perplexity search execution: {e}")
+            return {}
+
+        # Process results
+        merged_docs = {}
+        for query, result in zip(queries, results):
+            for url, doc in result.items():
+                doc['query'] = query  # Associate each document with its query
+                merged_docs[url] = doc
+
+        # Send completion status
+        if websocket_manager and job_id:
+            await websocket_manager.send_status_update(
+                job_id=job_id,
+                status="search_complete",
+                message=f"Perplexity search completed with {len(merged_docs)} documents found",
+                result={
+                    "step": "Searching",
+                    "total_documents": len(merged_docs),
+                    "queries_processed": len(queries)
+                }
+            )
+
+        return merged_docs
 
     async def analyze(self, state: ResearchState) -> Dict[str, Any]:
         company = state.get('company', 'Unknown Company')
@@ -40,15 +195,14 @@ class NewsScanner(BaseResearcher):
                 'query': f'News and announcements about {company}'  # Add a default query for site scrape
             }
         
-        # Perform additional research with recent time filter
+        # Perform additional research with Perplexity search
         try:
-            # Store documents with their respective queries
-            for query in queries:
-                documents = await self.search_documents(state, [query])
-                if documents:  # Only process if we got results
-                    for url, doc in documents.items():
-                        doc['query'] = query  # Associate each document with its query
-                        news_data[url] = doc
+            # Use Perplexity search instead of Tavily
+            documents = await self.search_documents_perplexity(state, queries)
+            if documents:  # Only process if we got results
+                for url, doc in documents.items():
+                    doc['query'] = doc.get('query', 'news_analysis')
+                    news_data[url] = doc
             
             msg.append(f"\n✓ Found {len(news_data)} documents")
             if websocket_manager := state.get('websocket_manager'):
@@ -56,7 +210,7 @@ class NewsScanner(BaseResearcher):
                     await websocket_manager.send_status_update(
                         job_id=job_id,
                         status="processing",
-                        message=f"Used Tavily Search to find {len(news_data)} documents",
+                        message=f"Used Perplexity Search to find {len(news_data)} documents",
                         result={
                             "step": "Searching",
                             "analyst_type": "News Scanner",

@@ -11,7 +11,8 @@ from .nodes.collector import Collector
 from .nodes.curator import Curator
 from .nodes.editor import Editor
 from .nodes.enricher import Enricher
-from .nodes.swot_analysis import SwotAnalysis  # Fixed import
+from .nodes.competitor_analysis import CompetitorAnalysis  # New competitor analysis node
+from .nodes.swot_analysis import SwotAnalysis  # New competitor analysis node
 from .nodes.researchers import (
     CompanyAnalyzer,
     FinancialAnalyst,
@@ -23,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 class Graph:
     def __init__(self, company=None, company_url=None, industry=None, hq_location=None, 
-                 competitors=None, websocket_manager=None, job_id=None):
+                 product_category=None, competitors=None, websocket_manager=None, job_id=None):
         """
         Initialize the research workflow for a main company with competitors.
         
@@ -32,6 +33,7 @@ class Graph:
             company_url: Main company URL
             industry: Industry
             hq_location: Main company HQ location
+            product_category: Main company product category
             competitors: List of competitor data
             websocket_manager: WebSocket manager for real-time updates
             job_id: Job ID for tracking
@@ -45,6 +47,7 @@ class Graph:
             company_url=company_url,
             hq_location=hq_location,
             industry=industry,
+            product_category=product_category,
             competitors=competitors or [],
             websocket_manager=websocket_manager,
             job_id=job_id,
@@ -59,7 +62,7 @@ class Graph:
 
     def _init_nodes(self):
         """Initialize all workflow nodes"""
-        self.ground = GroundingNode()
+        self.ground = GroundingNode(search_provider="perplexity")
         self.financial_analyst = FinancialAnalyst()
         self.news_scanner = NewsScanner()
         self.industry_analyst = IndustryAnalyzer()
@@ -69,6 +72,7 @@ class Graph:
         self.enricher = Enricher()
         self.briefing = Briefing()
         self.swot = SwotAnalysis()  # SWOT analysis node
+        self.competitor_analysis = CompetitorAnalysis()  # Competitor analysis node
         self.editor = Editor()
 
     def _build_workflow(self):
@@ -87,11 +91,12 @@ class Graph:
         self.workflow.add_node("briefing", self.briefing.run)
         self.workflow.add_node("editor", self.editor.run)
         self.workflow.add_node("swot", self.swot.run)  # SWOT analysis node
+        self.workflow.add_node("competitor_analysis", self.competitor_analysis.run)  # Competitor analysis node
 
         # Configure workflow edges
         self.workflow.set_entry_point("grounding")
-        self.workflow.set_finish_point("swot")  # Change finish point to SWOT
-        # self.workflow.set_finish_point("collector")
+        # Set finish point for final report
+        self.workflow.set_finish_point("competitor_analysis")  # Competitor analysis as final report
 
         research_nodes = [
             "financial_analyst", 
@@ -110,7 +115,12 @@ class Graph:
         self.workflow.add_edge("curator", "enricher")
         self.workflow.add_edge("enricher", "briefing")
         self.workflow.add_edge("briefing", "editor")    # Connect briefing to editor
-        self.workflow.add_edge("editor", "swot")        # Connect editor to SWOT
+
+        # Run both analyses in parallel after editor
+        self.workflow.add_edge("editor", "swot")  # Connect editor to SWOT
+        self.workflow.add_edge(
+            "swot", "competitor_analysis"
+        )  # Connect editor to competitor analysis
 
     async def run(self, thread: Dict[str, Any]) -> AsyncIterator[Dict[str, Any]]:
         """Execute the research workflow"""

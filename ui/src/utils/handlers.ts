@@ -19,7 +19,7 @@ export const handleGeneratePdf = async (
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        report_content: output.details.report,
+        report_content: output.details.report_content,
         company_name: originalCompanyName || 'research_report'
       }),
     });
@@ -60,10 +60,10 @@ export const handleCopyToClipboard = async (
   setIsCopied: (value: boolean) => void,
   setError: (error: string | null) => void
 ) => {
-  if (!output?.details?.report) return;
+  if (!output?.details?.report_content) return;
   
   try {
-    await navigator.clipboard.writeText(output.details.report);
+    await navigator.clipboard.writeText(output.details.report_content);
     setIsCopied(true);
     setTimeout(() => setIsCopied(false), 2000); // Reset after 2 seconds
   } catch (err) {
@@ -83,16 +83,17 @@ export const checkForFinalReport = async (
   pollingIntervalRef: React.MutableRefObject<NodeJS.Timeout | null>
 ) => {
   try {
-    const response = await fetch(`${API_URL}/research/status/${jobId}`);
+    const response = await fetch(`${API_URL}/job_status/${jobId}`);
     if (!response.ok) throw new Error('Failed to fetch status');
     
     const data = await response.json();
     
-    if (data.status === "completed" && data.result?.report) {
+    if (data.status === "completed" && data.result?.report_content) {
       setOutput({
         summary: "",
         details: {
-          report: data.result.report,
+          report_content: data.result.report_content,
+          competitor_analyses: data.result.competitor_analyses || {},
         },
       });
       setStatus({

@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Union
 from openai import AsyncOpenAI
 
 from ..classes import ResearchState
+from backend.services.mongodb import MongoDBService
 
 logger = logging.getLogger(__name__)
 
@@ -66,12 +67,14 @@ class SwotAnalysis:
                     "strengths_count": 0,
                     "weaknesses_count": 0,
                     "opportunities_count": 0,
-                    "threats_count": 0
-                }
+                    "threats_count": 0,
+                },
             }
 
         # Split content by headers
-        sections = re.split(r'### (Strengths|Weaknesses|Opportunities|Threats)', swot_text)
+        sections = re.split(
+            r"### (Strengths|Weaknesses|Opportunities|Threats)", swot_text
+        )
 
         structured_swot = {
             "strengths": [],
@@ -83,8 +86,8 @@ class SwotAnalysis:
                 "strengths_count": 0,
                 "weaknesses_count": 0,
                 "opportunities_count": 0,
-                "threats_count": 0
-            }
+                "threats_count": 0,
+            },
         }
 
         # Process each section
@@ -95,42 +98,48 @@ class SwotAnalysis:
 
                 # Extract bullet points
                 bullet_points = []
-                for line in section_content.split('\n'):
+                for line in section_content.split("\n"):
                     line = line.strip()
-                    if line.startswith('- ') or line.startswith('• '):
+                    if line.startswith("- ") or line.startswith("• "):
                         # Extract the point and citation
                         point_text = line[2:].strip()
-                        bullet_points.append({
-                            "text": point_text,
-                            "citation": self._extract_citation(point_text)
-                        })
+                        bullet_points.append(
+                            {
+                                "text": point_text,
+                                "citation": self._extract_citation(point_text),
+                            }
+                        )
 
                 structured_swot[section_name] = bullet_points
                 structured_swot["summary"][f"{section_name}_count"] = len(bullet_points)
 
         # Calculate total points
-        structured_swot["summary"]["total_points"] = sum([
-            structured_swot["summary"]["strengths_count"],
-            structured_swot["summary"]["weaknesses_count"],
-            structured_swot["summary"]["opportunities_count"],
-            structured_swot["summary"]["threats_count"]
-        ])
+        structured_swot["summary"]["total_points"] = sum(
+            [
+                structured_swot["summary"]["strengths_count"],
+                structured_swot["summary"]["weaknesses_count"],
+                structured_swot["summary"]["opportunities_count"],
+                structured_swot["summary"]["threats_count"],
+            ]
+        )
 
         return structured_swot
 
     def _extract_citation(self, text: str) -> str:
         """Extract citation from text like '[Company Briefing]'"""
-        citation_match = re.search(r'\[([^\]]+)\]', text)
+        citation_match = re.search(r"\[([^\]]+)\]", text)
         return citation_match.group(1) if citation_match else "Unknown"
 
-    def _calculate_swot_metrics(self, structured_swot: Dict[str, Any]) -> Dict[str, Any]:
+    def _calculate_swot_metrics(
+        self, structured_swot: Dict[str, Any]
+    ) -> Dict[str, Any]:
         """Calculate additional metrics for SWOT analysis"""
         metrics = {
             "balance_score": 0,
             "internal_focus": 0,
             "external_focus": 0,
             "positive_negative_ratio": 0,
-            "insights_quality": "medium"
+            "insights_quality": "medium",
         }
 
         strengths_count = structured_swot["summary"]["strengths_count"]
@@ -143,7 +152,9 @@ class SwotAnalysis:
         external_total = opportunities_count + threats_count
 
         if internal_total > 0 and external_total > 0:
-            metrics["balance_score"] = min(internal_total, external_total) / max(internal_total, external_total)
+            metrics["balance_score"] = min(internal_total, external_total) / max(
+                internal_total, external_total
+            )
 
         # Calculate focus ratios
         if internal_total > 0:
@@ -200,29 +211,31 @@ class SwotAnalysis:
 
         # Get all companies data (main company + competitors)
         companies_data = state.get("companies_data", {})
-        
+
         # Get main company data
         main_company_data = companies_data.get(company, {})
-        main_organized_content = (
-            main_company_data.get("site_scrape", {})
-            .get("organized_content")
+        main_organized_content = main_company_data.get("site_scrape", {}).get(
+            "organized_content"
         )
-        
+
         # Get competitor data for context
         competitor_insights = []
         for company_name, company_data in companies_data.items():
             if company_name != company and company_data.get("is_competitor", False):
-                competitor_content = (
-                    company_data.get("site_scrape", {})
-                    .get("organized_content", "")
+                competitor_content = company_data.get("site_scrape", {}).get(
+                    "organized_content", ""
                 )
                 if competitor_content:
-                    competitor_insights.append(f"=== {company_name} Competitor Data ===\n{competitor_content}\n")
+                    competitor_insights.append(
+                        f"=== {company_name} Competitor Data ===\n{competitor_content}\n"
+                    )
 
         # Build prompt using briefing data and competitor insights
-        competitor_section = "\n".join(competitor_insights) if competitor_insights else ""
+        competitor_section = (
+            "\n".join(competitor_insights) if competitor_insights else ""
+        )
         logger.info(f"Competitor section: {competitor_section[:100]}")
-        
+
         briefing_section = f"""
 === Company Overview ===
 {company_briefing}
@@ -350,24 +363,22 @@ Sources:
                 "quality_rating": metrics["insights_quality"],
                 "internal_external_balance": {
                     "internal_focus": metrics["internal_focus"],
-                    "external_focus": metrics["external_focus"]
+                    "external_focus": metrics["external_focus"],
                 },
-                "positive_negative_ratio": metrics["positive_negative_ratio"]
-            }
+                "positive_negative_ratio": metrics["positive_negative_ratio"],
+            },
         }
 
         # Store the comprehensive SWOT analysis
         state["swot_analysis"] = swot_analysis_result
-        state["report_content"] = result["swot"]  # Keep raw content for backward compatibility
+        state["report_content"] = result[
+            "swot"
+        ]  # Keep raw content for backward compatibility
 
         # Store structured data for easy access
         state["swot_structured"] = structured_swot
         state["swot_metrics"] = metrics
 
-        # Also store in swot_analyses for compatibility
-        if "swot_analyses" not in state:
-            state["swot_analyses"] = {}
-
-        # state["swot_analyses"] = result["swot"]
+        
 
         return state
