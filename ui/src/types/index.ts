@@ -73,4 +73,95 @@ export type ResearchStatusProps = {
   glassStyle: GlassStyle;
   loaderColor: string;
   statusRef: React.RefObject<HTMLDivElement>;
+};
+
+// 3C Analysis Types
+export type AnalysisType = 'company_research' | '3c_analysis';
+
+export type MarketResearchRequest = {
+  analysis_type: AnalysisType;
+  target_market: string;
+  market_segment?: string;
+  company?: string;
+  company_url?: string;
+  industry?: string;
+  hq_location?: string;
+};
+
+export type ThreeCAnalysisState = {
+  status: string;
+  message: string;
+  currentStep: string;
+  progress: number;
+  analysisType: AnalysisType;
+  targetMarket: string;
+  consumerInsights: Array<{
+    insight: string;
+    confidence: number;
+    source: string;
+  }>;
+  painPoints: string[];
+  customerPersonas: Array<{
+    name: string;
+    description: string;
+    characteristics: string[];
+  }>;
+  marketTrends: Array<{
+    trend: string;
+    confidence: number;
+    source: string;
+  }>;
+  trendPredictions: Array<{
+    title: string;
+    description: string;
+    timeHorizon: string;
+  }>;
+  opportunities: Array<{
+    title: string;
+    description: string;
+    priority: string;
+    recommendations: string[];
+  }>;
+  whiteSpaces: Array<{
+    title: string;
+    description: string;
+    marketGap: string;
+  }>;
+  recommendations: string[];
+  analysisComplete: boolean;
+};
+
+export type ThreeCProgressPhase = 
+  | 'query_generation'
+  | 'data_collection' 
+  | 'data_curation'
+  | 'consumer_analysis'
+  | 'trend_analysis'
+  | 'competitor_analysis'
+  | 'opportunity_analysis'
+  | 'synthesis'
+  | 'report_generation'
+  | 'complete';
+
+// Report sharing types
+export type SharedReport = {
+  id: string;
+  title: string;
+  content: string;
+  analysisType: string;
+  targetMarket: string;
+  generatedAt: string;
+  expiresAt?: string;
+  isPublic: boolean;
+};
+
+export type ReportExportFormat = 'markdown' | 'html' | 'pdf';
+
+export type ReportViewerProps = {
+  report: string;
+  reportTitle?: string;
+  analysisType?: string;
+  targetMarket?: string;
+  generatedAt?: string;
+  jobId?: string;
 }; 

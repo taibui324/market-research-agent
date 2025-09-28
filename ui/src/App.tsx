@@ -6,17 +6,29 @@ import ResearchQueries from './components/ResearchQueries';
 import ResearchStatus from './components/ResearchStatus';
 import ResearchReport from './components/ResearchReport';
 import ResearchForm from './components/ResearchForm';
-import {ResearchOutput, DocCount,DocCounts, EnrichmentCounts, ResearchState, ResearchStatusType} from './types';
+import AnalysisTypeSelector from './components/AnalysisTypeSelector';
+import MarketAnalysisForm from './components/MarketAnalysisForm';
+import ThreeCAnalysisProgress from './components/ThreeCAnalysisProgress';
+import {
+  ResearchOutput, 
+  DocCount,
+  DocCounts, 
+  EnrichmentCounts, 
+  ResearchState, 
+  ResearchStatusType,
+  AnalysisType,
+  MarketResearchRequest,
+  ThreeCAnalysisState,
+  ThreeCProgressPhase
+} from './types';
 import { checkForFinalReport } from './utils/handlers';
-import { colorAnimation, dmSansStyle, glassStyle, fadeInAnimation } from './styles';
+import { colorAnimation, dmSansStyle, glassStyle, fadeInAnimation } from './styles/index';
 
-const API_URL = import.meta.env.VITE_API_URL;
-const WS_URL = import.meta.env.VITE_WS_URL;
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+const WS_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:8000';
 
 if (!API_URL || !WS_URL) {
-  throw new Error(
-    "Environment variables VITE_API_URL and VITE_WS_URL must be set"
-  );
+  console.warn("Environment variables VITE_API_URL and VITE_WS_URL should be set. Using defaults.");
 }
 
 // Add styles to document head
@@ -29,6 +41,8 @@ dmSansStyleElement.textContent = dmSansStyle;
 document.head.appendChild(dmSansStyleElement);
 
 function App() {
+  // Analysis type state
+  const [analysisType, setAnalysisType] = useState<AnalysisType>('company_research');
 
   const [isResearching, setIsResearching] = useState(false);
   const [status, setStatus] = useState<ResearchStatusType | null>(null);
@@ -54,6 +68,36 @@ function App() {
     }
   });
   const [originalCompanyName, setOriginalCompanyName] = useState<string>("");
+
+  // 3C Analysis specific state
+  const [threeCAnalysisState, setThreeCAnalysisState] = useState<ThreeCAnalysisState>({
+    status: "idle",
+    message: "",
+    currentStep: "",
+    progress: 0,
+    analysisType: '3c_analysis',
+    targetMarket: "",
+    consumerInsights: [],
+    painPoints: [],
+    customerPersonas: [],
+    marketTrends: [],
+    trendPredictions: [],
+    opportunities: [],
+    whiteSpaces: [],
+    recommendations: [],
+    analysisComplete: false
+  });
+  const [threeCCurrentPhase, setThreeCCurrentPhase] = useState<ThreeCProgressPhase | null>(null);
+  const [threeCStartTime, setThreeCStartTime] = useState<Date | null>(null);
+  const [threeCErrors, setThreeCErrors] = useState<Array<{
+    phase: string;
+    message: string;
+    timestamp: Date;
+  }>>([]);
+  
+  // WebSocket connection status
+  const [websocketConnected, setWebsocketConnected] = useState(false);
+  const [currentJobId, setCurrentJobId] = useState<string | null>(null);
 
   // Add ref for status section
   const statusRef = useRef<HTMLDivElement>(null);
@@ -118,6 +162,15 @@ function App() {
     return () => clearInterval(interval);
   }, [isResearching]);
 
+  // Retry WebSocket connection function
+  const retryWebSocketConnection = () => {
+    if (currentJobId && !websocketConnected) {
+      console.log("Retrying WebSocket connection...");
+      setReconnectAttempts(0);
+      connectWebSocket(currentJobId);
+    }
+  };
+
   const resetResearch = () => {
     setIsResetting(true);
     
@@ -139,11 +192,34 @@ function App() {
           news: false
         }
       });
+      // Reset 3C analysis state
+      setThreeCAnalysisState({
+        status: "idle",
+        message: "",
+        currentStep: "",
+        progress: 0,
+        analysisType: '3c_analysis',
+        targetMarket: "",
+        consumerInsights: [],
+        painPoints: [],
+        customerPersonas: [],
+        marketTrends: [],
+        trendPredictions: [],
+        opportunities: [],
+        whiteSpaces: [],
+        recommendations: [],
+        analysisComplete: false
+      });
+      setThreeCCurrentPhase(null);
+      setThreeCStartTime(null);
+      setThreeCErrors([]);
       setPdfUrl(null);
       setCurrentPhase(null);
       setIsSearchPhase(false);
       setShouldShowQueries(false);
       setIsQueriesExpanded(true);
+      setWebsocketConnected(false);
+      setCurrentJobId(null);
       setIsBriefingExpanded(true);
       setIsEnrichmentExpanded(true);
       setIsResetting(false);
@@ -151,8 +227,142 @@ function App() {
     }, 300); // Match this with CSS transition duration
   };
 
+  const handle3CAnalysisUpdate = (statusData: any) => {
+    // Map status to 3C phases
+    const stepToPhaseMap: Record<string, ThreeCProgressPhase> = {
+      'Query Generation': 'query_generation',
+      'Data Collection': 'data_collection',
+      'Data Curation': 'data_curation',
+      'Consumer Analysis': 'consumer_analysis',
+      'Trend Analysis': 'trend_analysis',
+      'Competitor Analysis': 'competitor_analysis',
+      'Opportunity Analysis': 'opportunity_analysis',
+      'Synthesis': 'synthesis',
+      'Report Generation': 'report_generation'
+    };
+
+    // Update current phase
+    if (statusData.result?.step) {
+      const phase = stepToPhaseMap[statusData.result.step];
+      if (phase) {
+        setThreeCCurrentPhase(phase);
+      }
+    }
+
+    // Handle completion
+    if (statusData.status === "completed") {
+      setThreeCCurrentPhase('complete');
+      setIsComplete(true);
+      setIsResearching(false);
+      setStatus({
+        step: "Complete",
+        message: "3C Analysis completed successfully"
+      });
+      setOutput({
+        summary: "",
+        details: {
+          report: statusData.result.report,
+        },
+      });
+      setHasFinalReport(true);
+      
+      // Update 3C analysis state
+      setThreeCAnalysisState(prev => ({
+        ...prev,
+        status: "completed",
+        analysisComplete: true,
+        progress: 100
+      }));
+      
+      // Clear polling interval if it exists
+      if (pollingIntervalRef.current) {
+        clearInterval(pollingIntervalRef.current);
+        pollingIntervalRef.current = null;
+      }
+    }
+
+    // Handle processing updates
+    else if (statusData.status === "processing") {
+      setIsComplete(false);
+      setStatus({
+        step: statusData.result?.step || "Processing",
+        message: statusData.message || "Processing...",
+      });
+
+      // Update 3C analysis state
+      setThreeCAnalysisState(prev => ({
+        ...prev,
+        status: "processing",
+        message: statusData.message || "Processing...",
+        currentStep: statusData.result?.step || "",
+        progress: statusData.result?.progress_percentage || prev.progress,
+        targetMarket: statusData.result?.target_market || prev.targetMarket
+      }));
+      
+      scrollToStatus();
+    }
+
+    // Handle specific 3C analysis data updates
+    if (statusData.result) {
+      const result = statusData.result;
+      
+      // Update consumer insights
+      if (result.consumer_insights_count !== undefined) {
+        setThreeCAnalysisState(prev => ({
+          ...prev,
+          consumerInsights: Array(result.consumer_insights_count).fill(null).map((_, i) => ({
+            insight: `Consumer insight ${i + 1}`,
+            confidence: 0.8,
+            source: 'Market Research'
+          }))
+        }));
+      }
+
+      // Update market trends
+      if (result.market_trends_count !== undefined) {
+        setThreeCAnalysisState(prev => ({
+          ...prev,
+          marketTrends: Array(result.market_trends_count).fill(null).map((_, i) => ({
+            trend: `Market trend ${i + 1}`,
+            confidence: 0.8,
+            source: 'Industry Analysis'
+          }))
+        }));
+      }
+
+      // Update opportunities
+      if (result.opportunities_found !== undefined) {
+        setThreeCAnalysisState(prev => ({
+          ...prev,
+          opportunities: Array(result.opportunities_found).fill(null).map((_, i) => ({
+            title: `Market Opportunity ${i + 1}`,
+            description: 'Identified market opportunity',
+            priority: 'Medium',
+            recommendations: []
+          }))
+        }));
+      }
+    }
+
+    // Handle errors
+    if (statusData.status === "failed" || statusData.status === "error") {
+      const errorMessage = statusData.error || statusData.message || "3C Analysis failed";
+      setError(errorMessage);
+      setIsResearching(false);
+      setIsComplete(false);
+      
+      // Add to errors list
+      setThreeCErrors(prev => [...prev, {
+        phase: statusData.result?.step || 'Unknown',
+        message: errorMessage,
+        timestamp: new Date()
+      }]);
+    }
+  };
+
   const connectWebSocket = (jobId: string) => {
     console.log("Initializing WebSocket connection for job:", jobId);
+    setCurrentJobId(jobId);
     
     // Use the WS_URL directly if it's a full URL, otherwise construct it
     const wsUrl = WS_URL.startsWith('wss://') || WS_URL.startsWith('ws://')
@@ -166,6 +376,7 @@ function App() {
     ws.onopen = () => {
       console.log("WebSocket connection established for job:", jobId);
       setReconnectAttempts(0);
+      setWebsocketConnected(true);
     };
 
     ws.onclose = (event) => {
@@ -176,6 +387,8 @@ function App() {
         wasClean: event.wasClean,
         timestamp: new Date().toISOString()
       });
+      
+      setWebsocketConnected(false);
 
       if (isResearching && !hasFinalReport) {
         // Start polling for final report
@@ -218,6 +431,7 @@ function App() {
         readyState: ws.readyState,
         url: wsUrl
       });
+      setWebsocketConnected(false);
       setError("WebSocket connection error");
       setIsResearching(false);
     };
@@ -227,6 +441,12 @@ function App() {
 
       if (rawData.type === "status_update") {
         const statusData = rawData.data;
+
+        // Handle 3C Analysis specific updates
+        if (statusData.result?.analysis_type === '3c_analysis' || analysisType === '3c_analysis') {
+          handle3CAnalysisUpdate(statusData);
+          return;
+        }
 
         // Handle phase transitions
         if (statusData.result?.step) {
@@ -581,6 +801,75 @@ function App() {
     };
   }, []);
 
+  // Handler for 3C analysis form submission
+  const handle3CAnalysisSubmit = async (formData: MarketResearchRequest) => {
+    // Clear any existing errors first
+    setError(null);
+
+    // If research is complete, reset the UI first
+    if (isComplete) {
+      resetResearch();
+      await new Promise(resolve => setTimeout(resolve, 300)); // Wait for reset animation
+    }
+
+    // Reset states
+    setHasFinalReport(false);
+    setReconnectAttempts(0);
+    if (pollingIntervalRef.current) {
+      clearInterval(pollingIntervalRef.current);
+      pollingIntervalRef.current = null;
+    }
+
+    setIsResearching(true);
+    setOriginalCompanyName(formData.company || formData.target_market);
+    setHasScrolledToStatus(false);
+    setThreeCStartTime(new Date());
+
+    try {
+      const url = `${API_URL}/research/3c-analysis`;
+
+      const response = await fetch(url, {
+        method: "POST",
+        mode: "cors",
+        credentials: "omit",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(formData),
+      }).catch((error) => {
+        console.error("Fetch error:", error);
+        throw error;
+      });
+
+      console.log("3C Analysis Response received:", {
+        status: response.status,
+        ok: response.ok,
+        statusText: response.statusText,
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.log("Error response:", errorText);
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const data = await response.json();
+      console.log("3C Analysis Response data:", data);
+
+      if (data.job_id) {
+        console.log("Connecting WebSocket with job_id:", data.job_id);
+        connectWebSocket(data.job_id);
+      } else {
+        throw new Error("No job ID received");
+      }
+    } catch (err) {
+      console.log("Caught error:", err);
+      setError(err instanceof Error ? err.message : "Failed to start 3C analysis");
+      setIsResearching(false);
+    }
+  };
+
   // Create a custom handler for the form that receives form data
   const handleFormSubmit = async (formData: {
     companyName: string;
@@ -684,7 +973,7 @@ function App() {
         },
         body: JSON.stringify({
           report_content: output.details.report,
-          company_name: originalCompanyName || output.details.report
+          company_name: originalCompanyName || 'research_report'
         }),
       });
       
@@ -733,12 +1022,6 @@ function App() {
     }
   };
 
-  // Add document count display component
-
-  // Add BriefingProgress component
-
-  // Add EnrichmentProgress component
-
   // Function to render progress components in order
   const renderProgressComponents = () => {
     const components = [];
@@ -766,43 +1049,80 @@ function App() {
       );
     }
 
-    // Current phase component
-    if (currentPhase === 'briefing' || (currentPhase === 'complete' && researchState.briefingStatus)) {
+    // Research Status (always shown when researching or complete)
+    if (status || isResearching || isComplete) {
       components.push(
-        <ResearchBriefings
-          key="briefing"
-          briefingStatus={researchState.briefingStatus}
-          isExpanded={isBriefingExpanded}
-          onToggleExpand={() => setIsBriefingExpanded(!isBriefingExpanded)}
-          isResetting={isResetting}
-        />
+        <div key="status" ref={statusRef}>
+          <ResearchStatus
+            status={status}
+            error={error}
+            isComplete={isComplete}
+            currentPhase={currentPhase}
+            isResetting={isResetting}
+            glassStyle={glassStyle}
+            loaderColor={loaderColor}
+            statusRef={statusRef}
+          />
+        </div>
       );
     }
 
-    if (currentPhase === 'enrichment' || currentPhase === 'briefing' || currentPhase === 'complete') {
+    // 3C Analysis Progress (for 3C analysis type)
+    if (analysisType === '3c_analysis' && (isResearching || isComplete)) {
       components.push(
-        <CurationExtraction
-          key="enrichment"
-          enrichmentCounts={researchState.enrichmentCounts}
-          isExpanded={isEnrichmentExpanded}
-          onToggleExpand={() => setIsEnrichmentExpanded(!isEnrichmentExpanded)}
-          isResetting={isResetting}
+        <ThreeCAnalysisProgress
+          key="3c-progress"
+          analysisState={threeCAnalysisState}
+          currentPhase={threeCCurrentPhase}
+          startTime={threeCStartTime}
+          errors={threeCErrors}
+          isComplete={isComplete}
+          glassStyle={glassStyle}
           loaderColor={loaderColor}
         />
       );
     }
 
-    // Queries are always at the bottom when visible
-    if (shouldShowQueries && (researchState.queries.length > 0 || Object.keys(researchState.streamingQueries).length > 0)) {
+    // Research Queries (for company research)
+    if (analysisType === 'company_research' && shouldShowQueries && researchState.queries.length > 0) {
       components.push(
         <ResearchQueries
           key="queries"
           queries={researchState.queries}
           streamingQueries={researchState.streamingQueries}
           isExpanded={isQueriesExpanded}
-          onToggleExpand={() => setIsQueriesExpanded(!isQueriesExpanded)}
           isResetting={isResetting}
-          glassStyle={glassStyle.base}
+          glassStyle={glassStyle}
+          loaderColor={loaderColor}
+        />
+      );
+    }
+
+    // Curation Extraction (for company research)
+    if (analysisType === 'company_research' && researchState.docCounts) {
+      components.push(
+        <CurationExtraction
+          key="curation"
+          docCounts={researchState.docCounts}
+          enrichmentCounts={researchState.enrichmentCounts}
+          isEnrichmentExpanded={isEnrichmentExpanded}
+          isResetting={isResetting}
+          glassStyle={glassStyle}
+          loaderColor={loaderColor}
+        />
+      );
+    }
+
+    // Research Briefings (for company research)
+    if (analysisType === 'company_research' && Object.values(researchState.briefingStatus).some(status => status)) {
+      components.push(
+        <ResearchBriefings
+          key="briefings"
+          briefingStatus={researchState.briefingStatus}
+          isExpanded={isBriefingExpanded}
+          isResetting={isResetting}
+          glassStyle={glassStyle}
+          loaderColor={loaderColor}
         />
       );
     }
@@ -820,46 +1140,86 @@ function App() {
   }, []);
 
   return (
-    <div className="min-h-screen bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-white via-gray-50 to-white p-8 relative">
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_1px_1px,rgba(70,139,255,0.35)_1px,transparent_0)] bg-[length:24px_24px] bg-center"></div>
-      <div className="max-w-5xl mx-auto space-y-8 relative">
-        {/* Header Component */}
-        <Header glassStyle={glassStyle.card} />
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50">
+      <Header />
+      
+      <main className="container mx-auto px-4 py-8 max-w-4xl">
+        {/* Analysis Type Selector */}
+        <div className={`${glassStyle.card} mb-8`}>
+          <AnalysisTypeSelector
+            analysisType={analysisType}
+            onAnalysisTypeChange={setAnalysisType}
+            isResearching={isResearching}
+            glassStyle={glassStyle}
+          />
+        </div>
 
-        {/* Form Section */}
-        <ResearchForm 
-          onSubmit={handleFormSubmit}
-          isResearching={isResearching}
-          glassStyle={glassStyle}
-          loaderColor={loaderColor}
-        />
-
-        {/* Error Message */}
-        {error && (
-          <div 
-            className={`${glassStyle.card} border-[#FE363B]/30 bg-[#FE363B]/10 ${fadeInAnimation.fadeIn} ${isResetting ? 'opacity-0 transform -translate-y-4' : 'opacity-100 transform translate-y-0'} font-['DM_Sans']`}
-          >
-            <p className="text-[#FE363B]">{error}</p>
+        {/* Research Forms */}
+        {!isResearching && !isComplete && (
+          <div className={`${fadeInAnimation} mb-8`}>
+            {analysisType === 'company_research' ? (
+              <ResearchForm 
+                onSubmit={handleFormSubmit}
+                isResearching={isResearching}
+                glassStyle={glassStyle}
+                loaderColor={loaderColor}
+              />
+            ) : (
+              <MarketAnalysisForm
+                onSubmit={handle3CAnalysisSubmit}
+                isResearching={isResearching}
+                glassStyle={glassStyle}
+                loaderColor={loaderColor}
+              />
+            )}
           </div>
         )}
 
-        {/* Status Box */}
-        <ResearchStatus
-          status={status}
-          error={error}
-          isComplete={isComplete}
-          currentPhase={currentPhase}
-          isResetting={isResetting}
-          glassStyle={glassStyle}
-          loaderColor={loaderColor}
-          statusRef={statusRef}
-        />
-
-        {/* Progress Components Container */}
-        <div className="space-y-12 transition-all duration-500 ease-in-out">
+        {/* Progress Components */}
+        <div className="space-y-6">
           {renderProgressComponents()}
         </div>
-      </div>
+
+        {/* Reset Button */}
+        {(isComplete || error) && (
+          <div className="mt-8 text-center">
+            <button
+              onClick={resetResearch}
+              disabled={isResetting}
+              className={`
+                px-6 py-3 rounded-lg font-medium text-white transition-all duration-300
+                ${isResetting 
+                  ? 'bg-gray-400 cursor-not-allowed' 
+                  : 'bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 transform hover:scale-105 shadow-lg'
+                }
+              `}
+            >
+              {isResetting ? 'Resetting...' : 'Start New Research'}
+            </button>
+          </div>
+        )}
+
+        {/* WebSocket Connection Status */}
+        {isResearching && (
+          <div className="mt-4 text-center">
+            <div className="flex items-center justify-center space-x-2 text-sm text-gray-600">
+              <div className={`w-2 h-2 rounded-full ${websocketConnected ? 'bg-green-500' : 'bg-red-500'}`}></div>
+              <span>
+                {websocketConnected ? 'Connected' : 'Disconnected'}
+                {reconnectAttempts > 0 && ` (Reconnect attempts: ${reconnectAttempts})`}
+              </span>
+              {!websocketConnected && currentJobId && (
+                <button
+                  onClick={retryWebSocketConnection}
+                  className="ml-2 text-blue-600 hover:text-blue-800 underline"
+                >
+                  Retry
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+      </main>
     </div>
   );
 }
