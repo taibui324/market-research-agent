@@ -3,10 +3,62 @@ export type ResearchStatusType = {
   message: string;
 };
 
+// Competitor analysis types
+export type CompetitorInsight = {
+  text: string;
+  citation: string;
+};
+
+export type CompetitorStructuredData = {
+  product_directions: CompetitorInsight[];
+  technology_leverage: CompetitorInsight[];
+  positioning_insights: CompetitorInsight[];
+  competitive_matrix: {
+    companies: string[];
+    comparison_criteria: string[];
+    scores: { [key: string]: any };
+    insights: string[];
+  };
+  summary: {
+    total_insights: number;
+    product_directions_count: number;
+    technology_leverage_count: number;
+    positioning_insights_count: number;
+  };
+};
+
+export type CompetitorAnalysis = {
+  company: string;
+  competitor: string;
+  raw_content: string;
+  structured_data: CompetitorStructuredData;
+  metrics: {
+    analysis_depth: string;
+    technology_focus: number;
+    product_focus: number;
+    competitive_insights_quality: string;
+  };
+  generated_at: string;
+  analysis_quality: {
+    total_insights: number;
+    analysis_depth: string;
+    quality_rating: string;
+    focus_ratios: {
+      technology_focus: number;
+      product_focus: number;
+    };
+  };
+};
+
+export type CompetitorAnalyses = {
+  [key: string]: CompetitorAnalysis;
+};
+
 export type ResearchOutput = {
   summary: string;
   details: {
-    report: string;
+    report_content: string;
+    competitor_analyses?: CompetitorAnalyses;
   };
 };
 

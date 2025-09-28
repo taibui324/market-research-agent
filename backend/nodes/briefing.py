@@ -3,7 +3,7 @@ import logging
 import os
 from typing import Any, Dict, List, Union
 
-import google.generativeai as genai
+from openai import OpenAI
 
 from ..classes import ResearchState
 
@@ -11,16 +11,15 @@ logger = logging.getLogger(__name__)
 
 class Briefing:
     """Creates briefings for each research category and updates the ResearchState."""
-    
+
     def __init__(self) -> None:
         self.max_doc_length = 8000  # Maximum document content length
-        self.gemini_key = os.getenv("GEMINI_API_KEY")
-        if not self.gemini_key:
-            raise ValueError("GEMINI_API_KEY environment variable is not set")
-        
-        # Configure Gemini
-        genai.configure(api_key=self.gemini_key)
-        self.gemini_model = genai.GenerativeModel('gemini-2.5-flash')
+        self.openai_key = os.getenv("OPENAI_API_KEY")
+        if not self.openai_key:
+            raise ValueError("OPENAI_API_KEY environment variable is not set")
+
+        # Configure OpenAI
+        self.openai_client = OpenAI(api_key=self.openai_key)
 
     async def generate_category_briefing(
         self, docs: Union[Dict[str, Any], List[Dict[str, Any]]], 
@@ -46,10 +45,16 @@ class Briefing:
                 )
 
         prompts = {
-            'company': f"""Create a focused company briefing for {company}, a {industry} company based in {hq_location}.
+            "company": f"""Create a focused company briefing for {company}, a {industry} company based in {hq_location}.
 Key requirements:
 1. Start with: "{company} is a [what] that [does what] for [whom]"
 2. Structure using these exact headers and bullet points:
+3. you must keep the citation in square brackets after each bullet point.
+    Example:
+    - Apple’s iPhone accounted for over 52% of the company’s total revenue in fiscal year 2023 [Doc: Apple Annual Report 2023](https://www.apple.com/investor/static/pdf/10-K_2023.pdf).
+    - Company X launched a new AI product in 2025 [Doc: Company X Press Release](https://example.com/press-release).  
+    - Market size is expected to reach $10B by 2030 [Doc: Market Research Report](https://example.com/market-report).  
+    - CEO announced expansion into Asia [Doc: Financial Times Article](https://ft.com/example-article).  
 
 ### Core Product/Service
 * List distinct products/features
@@ -76,10 +81,15 @@ Key requirements:
 4. Never mention "no information found" or "no data available"
 5. No paragraphs, only bullet points
 6. Provide only the briefing. No explanations or commentary.""",
-
-            'industry': f"""Create a focused industry briefing for {company}, a {industry} company based in {hq_location}.
+            "industry": f"""Create a focused industry briefing for {company}, a {industry} company based in {hq_location}.
 Key requirements:
 1. Structure using these exact headers and bullet points:
+3. you must keep the citation in square brackets after each bullet point.
+    Example:
+    - Apple’s iPhone accounted for over 52% of the company’s total revenue in fiscal year 2023 [Doc: Apple Annual Report 2023](https://www.apple.com/investor/static/pdf/10-K_2023.pdf).
+    - Company X launched a new AI product in 2025 [Doc: Company X Press Release](https://example.com/press-release).  
+    - Market size is expected to reach $10B by 2030 [Doc: Market Research Report](https://example.com/market-report).  
+    - CEO announced expansion into Asia [Doc: Financial Times Article](https://ft.com/example-article).  
 
 ### Market Overview
 * State {company}'s exact market segment
@@ -102,10 +112,15 @@ Key requirements:
 3. No paragraphs, only bullet points
 4. Never mention "no information found" or "no data available"
 5. Provide only the briefing. No explanation.""",
-
-            'financial': f"""Create a focused financial briefing for {company}, a {industry} company based in {hq_location}.
+            "financial": f"""Create a focused financial briefing for {company}, a {industry} company based in {hq_location}.
 Key requirements:
 1. Structure using these headers and bullet points:
+3. you must keep the citation in square brackets after each bullet point.
+    Example:
+    - Apple’s iPhone accounted for over 52% of the company’s total revenue in fiscal year 2023 [Doc: Apple Annual Report 2023](https://www.apple.com/investor/static/pdf/10-K_2023.pdf).
+    - Company X launched a new AI product in 2025 [Doc: Company X Press Release](https://example.com/press-release).  
+    - Market size is expected to reach $10B by 2030 [Doc: Market Research Report](https://example.com/market-report).  
+    - CEO announced expansion into Asia [Doc: Financial Times Article](https://ft.com/example-article).  
 
 ### Funding & Investment
 * Total funding amount with date
@@ -121,10 +136,15 @@ Key requirements:
 5. NEVER repeat the same round of funding multiple times. ALWAYS assume that multiple funding rounds in the same month are the same round.
 6. NEVER include a range of funding amounts. Use your best judgement to determine the exact amount based on the information provided.
 6. Provide only the briefing. No explanation or commentary.""",
-
-            'news': f"""Create a focused news briefing for {company}, a {industry} company based in {hq_location}.
+            "news": f"""Create a focused news briefing for {company}, a {industry} company based in {hq_location}.
 Key requirements:
 1. Structure into these categories using bullet points:
+3. you must keep the citation in square brackets after each bullet point.
+    Example:
+    - Apple’s iPhone accounted for over 52% of the company’s total revenue in fiscal year 2023 [Doc: Apple Annual Report 2023](https://www.apple.com/investor/static/pdf/10-K_2023.pdf).
+    - Company X launched a new AI product in 2025 [Doc: Company X Press Release](https://example.com/press-release).  
+    - Market size is expected to reach $10B by 2030 [Doc: Market Research Report](https://example.com/market-report).  
+    - CEO announced expansion into Asia [Doc: Financial Times Article](https://ft.com/example-article).  
 
 ### Major Announcements
 * Product / service launches
@@ -144,7 +164,7 @@ Key requirements:
 5. Never use ### headers, only bullet points
 6. Provide only the briefing. Do not provide explanations or commentary.""",
         }
-        
+
         # Normalize docs to a list of (url, doc) tuples
         items = list(docs.items()) if isinstance(docs, dict) else [
             (doc.get('url', f'doc_{i}'), doc) for i, doc in enumerate(docs)
@@ -155,7 +175,7 @@ Key requirements:
             key=lambda x: float(x[1].get('evaluation', {}).get('overall_score', '0')), 
             reverse=True
         )
-        
+
         doc_texts = []
         total_length = 0
         for _ , doc in sorted_items:
@@ -169,7 +189,7 @@ Key requirements:
                 total_length += len(doc_entry)
             else:
                 break
-        
+
         separator = "\n" + "-" * 40 + "\n"
         prompt = f"""{prompts.get(category, 'Create a focused, informative and insightful research briefing on the company: {company} in the {industry} industry based on the provided documents.')}
 
@@ -178,11 +198,18 @@ Analyze the following documents and extract key information. Provide only the br
 {separator}{separator.join(doc_texts)}{separator}
 
 """
-        
+
         try:
             logger.info("Sending prompt to LLM")
-            response = self.gemini_model.generate_content(prompt)
-            content = response.text.strip()
+            response = self.openai_client.chat.completions.create(
+                model="gpt-4o",
+                messages=[
+                    {"role": "user", "content": prompt}
+                ],
+                max_tokens=4000,
+                temperature=0.1
+            )
+            content = response.choices[0].message.content.strip()
             if not content:
                 logger.error(f"Empty response from LLM for {category} briefing")
                 return {'content': ''}
@@ -210,7 +237,7 @@ Analyze the following documents and extract key information. Provide only the br
         company = state.get('company', 'Unknown Company')
         websocket_manager = state.get('websocket_manager')
         job_id = state.get('job_id')
-        
+
         # Send initial briefing status
         if websocket_manager and job_id:
             await websocket_manager.send_status_update(
@@ -228,7 +255,7 @@ Analyze the following documents and extract key information. Provide only the br
             "job_id": job_id
         }
         logger.info(f"Creating section briefings for {company}")
-        
+
         # Mapping of curated data fields to briefing categories
         categories = {
             'financial_data': ("financial", "financial_briefing"),
@@ -236,7 +263,7 @@ Analyze the following documents and extract key information. Provide only the br
             'industry_data': ("industry", "industry_briefing"),
             'company_data': ("company", "company_briefing")
         }
-        
+
         briefings = {}
 
         # Create tasks for parallel processing
@@ -244,10 +271,10 @@ Analyze the following documents and extract key information. Provide only the br
         for data_field, (cat, briefing_key) in categories.items():
             curated_key = f'curated_{data_field}'
             curated_data = state.get(curated_key, {})
-            
+
             if curated_data:
                 logger.info(f"Processing {data_field} with {len(curated_data)} documents")
-                
+
                 # Create task for this category
                 briefing_tasks.append({
                     'category': cat,
@@ -263,7 +290,7 @@ Analyze the following documents and extract key information. Provide only the br
         if briefing_tasks:
             # Rate limiting semaphore for LLM API
             briefing_semaphore = asyncio.Semaphore(2)  # Limit to 2 concurrent briefings
-            
+
             async def process_briefing(task: Dict[str, Any]) -> Dict[str, Any]:
                 """Process a single briefing with rate limiting."""
                 async with briefing_semaphore:
@@ -272,7 +299,7 @@ Analyze the following documents and extract key information. Provide only the br
                         task['category'],
                         context
                     )
-                    
+
                     if result['content']:
                         briefings[task['category']] = result['content']
                         state[task['briefing_key']] = result['content']
@@ -280,7 +307,7 @@ Analyze the following documents and extract key information. Provide only the br
                     else:
                         logger.error(f"Failed to generate briefing for {task['data_field']}")
                         state[task['briefing_key']] = ""
-                    
+
                     return {
                         'category': task['category'],
                         'success': bool(result['content']),
@@ -292,7 +319,7 @@ Analyze the following documents and extract key information. Provide only the br
                 process_briefing(task) 
                 for task in briefing_tasks
             ])
-            
+
             # Log completion statistics
             successful_briefings = sum(1 for r in results if r['success'])
             total_length = sum(r['length'] for r in results)

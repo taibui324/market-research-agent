@@ -5,6 +5,7 @@ interface LocationInputProps {
   value: string;
   onChange: (value: string) => void;
   className?: string;
+  placeholder?: string; // Add this line
 }
 
 declare global {
@@ -14,7 +15,7 @@ declare global {
   }
 }
 
-const LocationInput: React.FC<LocationInputProps> = ({ value, onChange, className }) => {
+const LocationInput: React.FC<LocationInputProps> = ({ value, onChange, className, placeholder = "City, Country" }) => {
   const inputRef = useRef<HTMLInputElement>(null);
   const autocompleteElementRef = useRef<any>(null);
   const [isApiLoaded, setIsApiLoaded] = useState(false);
@@ -193,7 +194,7 @@ const LocationInput: React.FC<LocationInputProps> = ({ value, onChange, classNam
           }
         }}
         className={`${className} !font-['DM_Sans']`}
-        placeholder="City, Country"
+        placeholder={placeholder} // Use the prop instead of hardcoded value
       />
     </div>
   );

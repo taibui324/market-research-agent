@@ -10,7 +10,7 @@ from ..classes import ResearchState
 
 class Enricher:
     """Enriches curated documents with raw content."""
-    
+
     def __init__(self) -> None:
         tavily_key = os.getenv("TAVILY_API_KEY")
         if not tavily_key:
@@ -74,10 +74,10 @@ class Enricher:
 
         # Create batches
         batches = [urls[i:i + self.batch_size] for i in range(0, len(urls), self.batch_size)]
-        
+
         # Process batches in parallel with rate limiting
         semaphore = asyncio.Semaphore(3)  # Limit concurrent batches to 3
-        
+
         async def process_batch(batch_num: int, batch_urls: List[str]) -> Dict[str, str]:
             async with semaphore:
                 if websocket_manager and job_id:
@@ -96,12 +96,12 @@ class Enricher:
                 # Process URLs in batch concurrently
                 tasks = [self.fetch_single_content(url, websocket_manager, job_id, category) for url in batch_urls]
                 results = await asyncio.gather(*tasks)
-                
+
                 # Combine results from batch
                 batch_contents = {}
                 for result in results:
                     batch_contents.update(result)
-                
+
                 return batch_contents
 
         # Process all batches
@@ -148,7 +148,7 @@ class Enricher:
         for data_field, (label, category) in data_types.items():
             curated_field = f'curated_{data_field}'
             curated_docs = state.get(curated_field, {})
-            
+
             if not curated_docs:
                 msg.append(f"\n• No curated {label} documents to enrich")
                 continue
@@ -156,11 +156,11 @@ class Enricher:
             # Find documents needing enrichment
             docs_needing_content = {url: doc for url, doc in curated_docs.items() 
                                   if not doc.get('raw_content')}
-            
+
             if not docs_needing_content:
                 msg.append(f"\n• All {label} documents already have raw content")
                 continue
-            
+
             msg.append(f"\n• Enriching {len(docs_needing_content)} {label} documents...")
 
             if websocket_manager and job_id:
@@ -194,10 +194,10 @@ class Enricher:
                         job_id,
                         task['category']
                     )
-                    
+
                     enriched_count = 0
                     error_count = 0
-                    
+
                     for url, content_or_error in raw_contents.items():
                         if isinstance(content_or_error, dict) and content_or_error.get('error'):
                             # This is an error result - just skip it
@@ -209,7 +209,7 @@ class Enricher:
 
                     # Update state with enriched documents
                     state[task['field']] = task['curated_docs']
-                    
+
                     if websocket_manager and job_id:
                         await websocket_manager.send_status_update(
                             job_id=job_id,
@@ -222,7 +222,7 @@ class Enricher:
                                 "total": len(task['docs'])
                             }
                         )
-                    
+
                     return {
                         'category': task['category'],
                         'enriched': enriched_count,
@@ -241,7 +241,7 @@ class Enricher:
 
             # Process all categories in parallel
             results = await asyncio.gather(*[process_category(task) for task in enrichment_tasks])
-            
+
             # Calculate totals
             total_enriched = sum(r['enriched'] for r in results)
             total_documents = sum(r['total'] for r in results)
@@ -252,7 +252,7 @@ class Enricher:
                 status_message = f"Content enrichment complete. Successfully enriched {total_enriched}/{total_documents} documents"
                 if total_errors > 0:
                     status_message += f". Skipped {total_errors} documents."
-                
+
                 await websocket_manager.send_status_update(
                     job_id=job_id,
                     status="enrichment_complete",
@@ -269,7 +269,10 @@ class Enricher:
         messages = state.get('messages', [])
         messages.append(AIMessage(content="\n".join(msg)))
         state['messages'] = messages
-        
+        # get me all the messages in the msg list
+        msg = [message.content for message in messages]
+        state["enriched_step"] = "\n".join(msg)
+
         return state
 
     async def run(self, state: ResearchState) -> ResearchState:

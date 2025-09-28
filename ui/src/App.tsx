@@ -366,8 +366,8 @@ function App() {
     
     // Use the WS_URL directly if it's a full URL, otherwise construct it
     const wsUrl = WS_URL.startsWith('wss://') || WS_URL.startsWith('ws://')
-      ? `${WS_URL}/research/ws/${jobId}`
-      : `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${WS_URL}/research/ws/${jobId}`;
+      ? `${WS_URL}/company_analysis/ws/${jobId}`
+      : `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${WS_URL}/company_analysis/ws/${jobId}`;
     
     console.log("Connecting to WebSocket URL:", wsUrl);
     
@@ -470,6 +470,8 @@ function App() {
 
         // Handle completion
         if (statusData.status === "completed") {
+          console.log("Research completed, received data:", statusData.result);
+          console.log("Competitor analyses:", statusData.result.competitor_analyses);
           setCurrentPhase('complete');
           setIsComplete(true);
           setIsResearching(false);
@@ -480,7 +482,8 @@ function App() {
           setOutput({
             summary: "",
             details: {
-              report: statusData.result.report,
+              report_content: statusData.result.report_content,
+              competitor_analyses: statusData.result.competitor_analyses || {},
             },
           });
           setHasFinalReport(true);
@@ -744,8 +747,8 @@ function App() {
           setOutput((prev) => ({
             summary: "Generating report...",
             details: {
-              report: prev?.details?.report
-                ? prev.details.report + statusData.result.chunk
+              report_content: prev?.details?.report_content
+                ? prev.details.report_content + statusData.result.chunk
                 : statusData.result.chunk,
             },
           }));
@@ -876,6 +879,10 @@ function App() {
     companyUrl: string;
     companyHq: string;
     companyIndustry: string;
+    competitor: string;
+    competitorUrl: string;
+    competitorHq: string;
+    competitorIndustry: string;
   }) => {
 
     // Clear any existing errors first
@@ -900,7 +907,7 @@ function App() {
     setHasScrolledToStatus(false); // Reset scroll flag when starting new research
 
     try {
-      const url = `${API_URL}/research`;
+      const url = `${API_URL}/company_analysis`;
 
       // Format the company URL if provided
       const formattedCompanyUrl = formData.companyUrl
@@ -909,12 +916,31 @@ function App() {
           : `https://${formData.companyUrl}`
         : undefined;
 
+      // Format the competitor URL if provided
+      const formattedCompetitorUrl = formData.competitorUrl
+        ? formData.competitorUrl.startsWith('http://') || formData.competitorUrl.startsWith('https://')
+          ? formData.competitorUrl
+          : `https://${formData.competitorUrl}`
+        : undefined;
+
+      // Build competitors array
+      const competitors = [];
+      if (formData.competitor && formData.competitor.trim()) {
+        competitors.push({
+          company: formData.competitor.trim(),
+          company_url: formattedCompetitorUrl,
+          hq_location: formData.competitorHq || undefined,
+          industry: formData.competitorIndustry || undefined,
+        });
+      }
+
       // Log the request details
       const requestData = {
         company: formData.companyName,
         company_url: formattedCompanyUrl,
         industry: formData.companyIndustry || undefined,
         hq_location: formData.companyHq || undefined,
+        competitors: competitors, // Add competitors array
       };
 
       const response = await fetch(url, {
@@ -1010,10 +1036,10 @@ function App() {
 
   // Add new function to handle copying to clipboard
   const handleCopyToClipboard = async () => {
-    if (!output?.details?.report) return;
+    if (!output?.details?.report_content) return;
     
     try {
-      await navigator.clipboard.writeText(output.details.report);
+      await navigator.clipboard.writeText(output.details.report_content);
       setIsCopied(true);
       setTimeout(() => setIsCopied(false), 2000); // Reset after 2 seconds
     } catch (err) {
@@ -1034,7 +1060,7 @@ function App() {
           output={{
             summary: output.summary,
             details: {
-              report: output.details.report || ''
+              report_content: output.details.report_content || ''
             }
           }}
           isResetting={isResetting}
@@ -1048,6 +1074,7 @@ function App() {
         />
       );
     }
+
 
     // Research Status (always shown when researching or complete)
     if (status || isResearching || isComplete) {
