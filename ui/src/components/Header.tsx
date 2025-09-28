@@ -14,27 +14,14 @@ const Header: React.FC<HeaderProps> = ({ glassStyle }) => {
 
   return (
     <div className="relative mb-16">
-      <div className="text-center pt-8 pb-4">
-        {/* Main Title with enhanced styling */}
-        <div className="flex items-center justify-center mb-4">
-          <div className="flex items-center space-x-3">
-            <div className="p-3 bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl shadow-lg">
-              <TrendingUp className="w-8 h-8 text-white" />
-            </div>
-            <div>
-              <h1 className="text-5xl font-bold text-gray-900 font-['DM_Sans'] tracking-tight leading-tight">
-                Company Research
-                <span className="block text-4xl bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
-                  Agent
-                </span>
-              </h1>
-            </div>
-          </div>
-        </div>
-        
-        {/* Enhanced subtitle */}
-        <p className="text-xl text-gray-600 font-['DM_Sans'] max-w-2xl mx-auto leading-relaxed">
-          Conduct comprehensive company diligence with AI-powered insights
+
+      <div className="text-center pt-4">
+        <h1 className="text-[48px] font-medium text-[#1a202c] font-['DM_Sans'] tracking-[-1px] leading-[52px] text-center mx-auto antialiased">
+          AI Research Agent
+        </h1>
+        <p className="text-gray-600 text-lg font-['DM_Sans'] mt-4">
+          Company Research & 3C Market Analysis powered by Tavily
+
         </p>
         
         {/* Feature highlights */}

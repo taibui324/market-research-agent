@@ -79,13 +79,18 @@ job_status = defaultdict(lambda: {
     "completed_at": None
 })
 
-# Updated data models for main company with competitors
-class CompetitorData(BaseModel):
-    company: str
-    company_url: Optional[str] = None
-    hq_location: Optional[str] = None
-    industry: Optional[str] = None
-    product_category: Optional[str] = None
+
+# Store shared reports in memory (in production, use a database)
+shared_reports = {}
+
+mongodb = None
+if mongo_uri := os.getenv("MONGODB_URI"):
+    try:
+        mongodb = MongoDBService(mongo_uri)
+        logger.info("MongoDB integration enabled")
+    except Exception as e:
+        logger.warning(f"Failed to initialize MongoDB: {e}. Continuing without persistence.")
+
 
 class ResearchRequest(BaseModel):
     company: str
@@ -109,7 +114,12 @@ class PDFGenerationRequest(BaseModel):
     report_content: str
     company_name: Optional[str] = None
 
-@app.options("/company_analysis", tags=["company_analysis"])
+
+class SharedReportRequest(BaseModel):
+    job_id: str
+    expiration_days: Optional[int] = 30
+
+@app.options("/research")
 async def preflight():
     response = JSONResponse(content=None, status_code=200)
     response.headers["Access-Control-Allow-Origin"] = "*"
@@ -679,6 +689,115 @@ async def generate_pdf(data: PDFGenerationRequest):
         else:
             raise HTTPException(status_code=500, detail=result)
     except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/shared-reports")
+async def create_shared_report(data: SharedReportRequest):
+    """Create a shareable link for a report"""
+    try:
+        # Check if the job exists and has a report
+        if data.job_id not in job_status:
+            raise HTTPException(status_code=404, detail="Job not found")
+        
+        job = job_status[data.job_id]
+        if job["status"] != "completed" or not job.get("report"):
+            raise HTTPException(status_code=400, detail="Report not available for sharing")
+        
+        # Generate a unique share ID
+        share_id = str(uuid.uuid4())
+        
+        # Calculate expiration date
+        expiration_date = None
+        if data.expiration_days and data.expiration_days > 0:
+            from datetime import timedelta
+            expiration_date = (datetime.now() + timedelta(days=data.expiration_days)).isoformat()
+        
+        # Store the shared report
+        shared_reports[share_id] = {
+            "id": share_id,
+            "title": f"{job.get('company', 'Market Research')} Report",
+            "content": job["report"],
+            "analysis_type": job_status[data.job_id].get("analysis_type", "Market Research"),
+            "target_market": job_status[data.job_id].get("target_market", ""),
+            "generated_at": job["last_update"],
+            "expires_at": expiration_date,
+            "is_public": True,
+            "job_id": data.job_id
+        }
+        
+        # Store in MongoDB if available
+        if mongodb:
+            try:
+                mongodb.db.shared_reports.insert_one(shared_reports[share_id])
+            except Exception as e:
+                logger.warning(f"Failed to store shared report in MongoDB: {e}")
+        
+        return {
+            "shareId": share_id,
+            "shareUrl": f"/shared-report/{share_id}"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error creating shared report: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/shared-reports/{share_id}")
+async def get_shared_report(share_id: str):
+    """Get a shared report by ID"""
+    try:
+        # First check in-memory storage
+        if share_id in shared_reports:
+            report = shared_reports[share_id]
+        elif mongodb:
+            # Check MongoDB
+            report = mongodb.db.shared_reports.find_one({"id": share_id})
+            if not report:
+                raise HTTPException(status_code=404, detail="Shared report not found")
+        else:
+            raise HTTPException(status_code=404, detail="Shared report not found")
+        
+        # Check if report has expired
+        if report.get("expires_at"):
+            expiration = datetime.fromisoformat(report["expires_at"])
+            if datetime.now() > expiration:
+                raise HTTPException(status_code=410, detail="Shared report has expired")
+        
+        # Check if report is public
+        if not report.get("is_public", False):
+            raise HTTPException(status_code=403, detail="This report is not publicly accessible")
+        
+        return report
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error retrieving shared report: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/shared-reports/{share_id}")
+async def delete_shared_report(share_id: str):
+    """Delete a shared report"""
+    try:
+        # Remove from in-memory storage
+        if share_id in shared_reports:
+            del shared_reports[share_id]
+        
+        # Remove from MongoDB if available
+        if mongodb:
+            result = mongodb.db.shared_reports.delete_one({"id": share_id})
+            if result.deleted_count == 0 and share_id not in shared_reports:
+                raise HTTPException(status_code=404, detail="Shared report not found")
+        elif share_id not in shared_reports:
+            raise HTTPException(status_code=404, detail="Shared report not found")
+        
+        return {"message": "Shared report deleted successfully"}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting shared report: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
