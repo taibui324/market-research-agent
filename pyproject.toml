@@ -11,12 +11,15 @@ dependencies = [
     "python-dotenv>=1.1.1",
     "langchain-core",
     "langgraph",
-    "openai",    
+    "openai",
     "pymongo",
     "reportlab",
     "uvicorn[standard]",
     "websockets",
     "google-generativeai",
-    "tavily-python"
-
+    "tavily-python",
+    "pydantic-settings>=2.10.1",
+    "aiohttp>=3.12.15",
+    "bs4>=0.0.2",
+    "langchain-perplexity>=0.1.2",
 ]

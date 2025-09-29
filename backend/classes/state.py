@@ -8,6 +8,8 @@ except ImportError:
     # For Python < 3.11 compatibility
     from typing_extensions import NotRequired, Required
 
+from typing_extensions import Annotated
+
 from backend.services.websocket_manager import WebSocketManager
 
 # Competitor data structure
@@ -88,6 +90,30 @@ class MarketOpportunity:
     priority: str           # high, medium, low
     recommendations: List[str]
 
+
+class CustomerMappingResult(TypedDict):
+    """Individual consumer need/trend mapping result with cluster analysis."""
+    
+    cluster: Annotated[str, ..., "Consumer behavior cluster category (e.g., Quality, Convenience, Price, Sustainability, Digital)"]
+    key_insights: Annotated[str, ..., "Key insights and implications about this consumer behavior or trend"]
+    frequency: Annotated[int, ..., "Number of posts/mentions found for this consumer need or trend"]
+    notes: Annotated[str, ..., "Notes about this consumer need or trend"]
+
+class CustomerMappingTrendSummary(TypedDict):
+    """Monthly or periodic trend summary for consumer behavior analysis."""
+    
+    start_date: Annotated[datetime, ..., "Start date of the trend analysis period"]
+    end_date: Annotated[datetime, ..., "End date of the trend analysis period"]
+    trend_highlights: Annotated[str, ..., "Key trend highlights and developments during this period"]
+
+class CustomerMappingResults(TypedDict):
+    """Complete customer mapping analysis results with trends and consumer insights."""
+    
+    start_date: Annotated[datetime, ..., "Start date of the trend analysis period"]
+    end_date: Annotated[datetime, ..., "End date of the trend analysis period"]
+    trend_summaries: Annotated[List[CustomerMappingTrendSummary], ..., "List of trend summaries covering different time periods"]
+    consumer_insights: Annotated[List[CustomerMappingResult], ..., "List of clustered consumer needs and trends with frequency analysis"]
+
 class ResearchState(InputState):
     site_scrape: Dict[str, Any]
     messages: List[Any]
@@ -99,6 +125,7 @@ class ResearchState(InputState):
     curated_news_data: Dict[str, Any]
     curated_industry_data: Dict[str, Any]
     curated_company_data: Dict[str, Any]
+    customer_mapping_results: CustomerMappingResults
     financial_briefing: str
     news_briefing: str
     industry_briefing: str
