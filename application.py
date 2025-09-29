@@ -92,6 +92,15 @@ if mongo_uri := os.getenv("MONGODB_URI"):
         logger.warning(f"Failed to initialize MongoDB: {e}. Continuing without persistence.")
 
 
+# Updated data models for main company with competitors
+class CompetitorData(BaseModel):
+    company: str
+    company_url: Optional[str] = None
+    hq_location: Optional[str] = None
+    industry: Optional[str] = None
+    product_category: Optional[str] = None
+
+
 class ResearchRequest(BaseModel):
     company: str
     company_url: Optional[str] = None
