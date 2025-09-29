@@ -8,6 +8,7 @@ from langchain_core.messages import AIMessage
 
 from ...classes import MarketResearchState, ConsumerInsight
 from .base import BaseResearcher
+from .customer_mapping import CustomerMappingResearcher
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +23,9 @@ class ConsumerAnalysisAgent(BaseResearcher):
     def __init__(self) -> None:
         super().__init__()
         self.analyst_type = "consumer_analyst"
+        
+        # Initialize customer mapping researcher for enhanced consumer analysis
+        self.customer_mapping_researcher = CustomerMappingResearcher()
         
         # Japanese curry market specific keywords for enhanced search
         self.market_keywords = [
@@ -114,6 +118,9 @@ class ConsumerAnalysisAgent(BaseResearcher):
         # Map purchase journey
         purchase_journey = await self.map_purchase_journey(consumer_insights, state)
         
+        # Integrate customer mapping analysis for enhanced consumer insights
+        customer_mapping_results = await self.integrate_customer_mapping(state, target_market)
+        
         # Update state with consumer analysis results
         messages = state.get('messages', [])
         messages.append(AIMessage(content="\n".join(msg)))
@@ -123,7 +130,8 @@ class ConsumerAnalysisAgent(BaseResearcher):
             'raw_data': consumer_data,
             'structured_insights': consumer_insights,
             'analysis_timestamp': datetime.now().isoformat(),
-            'market_focus': target_market
+            'market_focus': target_market,
+            'customer_mapping_integration': customer_mapping_results
         }
         
         # Return state updates - avoid returning conflicting keys
@@ -132,7 +140,8 @@ class ConsumerAnalysisAgent(BaseResearcher):
             'consumer_insights': consumer_insights_data,
             'pain_points': pain_points,
             'customer_personas': customer_personas,
-            'purchase_journey': purchase_journey
+            'purchase_journey': purchase_journey,
+            'customer_mapping_results': customer_mapping_results
         }
 
     async def generate_consumer_queries(self, state: MarketResearchState) -> List[str]:
@@ -544,6 +553,180 @@ class ConsumerAnalysisAgent(BaseResearcher):
             }
         
         return purchase_journey
+
+    async def integrate_customer_mapping(self, state: MarketResearchState, target_market: str) -> Dict[str, Any]:
+        """
+        Integrate customer mapping analysis to enhance consumer insights.
+        Uses CustomerMappingResearcher to provide additional consumer behavior data.
+        """
+        websocket_manager = state.get('websocket_manager')
+        job_id = state.get('job_id')
+        
+        try:
+            if websocket_manager and job_id:
+                await websocket_manager.send_status_update(
+                    job_id=job_id,
+                    status="processing",
+                    message="Integrating customer mapping analysis",
+                    result={
+                        "step": "Customer Mapping Integration",
+                        "analyst_type": "Consumer Analyst",
+                        "target_market": target_market
+                    }
+                )
+            
+            # Map target market to industry for customer mapping
+            industry_mapping = {
+                'japanese_curry': 'Packaged curry products (Curry roux & ready-to-eat/retort curry)',
+                'curry': 'Packaged curry products (Curry roux & ready-to-eat/retort curry)',
+                'food': 'Food and beverage industry',
+                'restaurant': 'Restaurant and food service industry'
+            }
+            
+            industry = industry_mapping.get(target_market.lower(), f"{target_market} industry")
+            
+            # Create customer mapping state
+            customer_mapping_state = {
+                'industry': industry,
+                'websocket_manager': websocket_manager,
+                'job_id': job_id
+            }
+            
+            # Execute customer mapping research
+            logger.info(f"Executing customer mapping research for {industry}")
+            customer_mapping_results = await self.customer_mapping_researcher.research_customer_mapping(
+                customer_mapping_state, 
+                industry=industry
+            )
+            
+            # Extract key insights from customer mapping for integration
+            integration_summary = await self.synthesize_customer_mapping_insights(
+                customer_mapping_results, target_market, state
+            )
+            
+            if websocket_manager and job_id:
+                await websocket_manager.send_status_update(
+                    job_id=job_id,
+                    status="processing",
+                    message="Customer mapping integration completed",
+                    result={
+                        "step": "Customer Mapping Integration",
+                        "status": "Completed",
+                        "consumer_insights_count": len(customer_mapping_results.get('consumer_insights', [])),
+                        "trend_summaries_count": len(customer_mapping_results.get('trend_summaries', []))
+                    }
+                )
+            
+            return {
+                'raw_results': customer_mapping_results,
+                'integration_summary': integration_summary,
+                'industry_analyzed': industry,
+                'analysis_timestamp': datetime.now().isoformat()
+            }
+            
+        except Exception as e:
+            logger.error(f"Error integrating customer mapping: {e}")
+            
+            if websocket_manager and job_id:
+                await websocket_manager.send_status_update(
+                    job_id=job_id,
+                    status="warning",
+                    message=f"Customer mapping integration failed: {str(e)}",
+                    result={
+                        "step": "Customer Mapping Integration",
+                        "status": "Failed",
+                        "error": str(e)
+                    }
+                )
+            
+            return {
+                'error': str(e),
+                'status': 'failed',
+                'analysis_timestamp': datetime.now().isoformat()
+            }
+
+    async def synthesize_customer_mapping_insights(self, customer_mapping_results: Dict[str, Any], target_market: str, state: MarketResearchState) -> Dict[str, Any]:
+        """
+        Synthesize customer mapping results into actionable insights for consumer analysis.
+        Extracts key consumer behavior patterns and trends.
+        """
+        try:
+            consumer_insights = customer_mapping_results.get('consumer_insights', [])
+            trend_summaries = customer_mapping_results.get('trend_summaries', [])
+            
+            # Extract key consumer behavior clusters
+            behavior_clusters = []
+            for insight in consumer_insights:
+                cluster_info = {
+                    'cluster': insight.get('cluster', 'Unknown'),
+                    'consumer_need_trend': insight.get('consumer_need_trend', ''),
+                    'frequency': insight.get('frequency', 0),
+                    'key_insights': insight.get('key_insights', '')
+                }
+                behavior_clusters.append(cluster_info)
+            
+            # Extract trend evolution patterns
+            trend_evolution = []
+            for trend in trend_summaries:
+                trend_info = {
+                    'period': f"{trend.get('start_date', '')} to {trend.get('end_date', '')}",
+                    'highlights': trend.get('trend_highlights', ''),
+                    'behavior_changes': trend.get('consumer_behavior_changes', ''),
+                    'demographic_shifts': trend.get('demographic_trends', '')
+                }
+                trend_evolution.append(trend_info)
+            
+            # Generate synthesis using LLM
+            synthesis_prompt = f"""
+            Synthesize customer mapping insights for {target_market} market consumer analysis:
+            
+            Consumer Behavior Clusters:
+            {behavior_clusters[:5]}  # Top 5 clusters
+            
+            Trend Evolution:
+            {trend_evolution[:3]}  # Recent 3 trends
+            
+            Provide a synthesis focusing on:
+            1. Key consumer behavior patterns relevant to {target_market}
+            2. Emerging consumer needs and preferences
+            3. Demographic and psychographic insights
+            4. Purchase journey implications
+            5. Market opportunities based on consumer behavior
+            
+            Format as structured insights for integration with consumer analysis.
+            """
+            
+            response = await self.openai_client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": f"You are a consumer insights analyst synthesizing customer mapping data for {target_market} market research."},
+                    {"role": "user", "content": synthesis_prompt}
+                ],
+                temperature=0.3,
+                max_tokens=1000
+            )
+            
+            synthesis_text = response.choices[0].message.content
+            
+            return {
+                'behavior_clusters': behavior_clusters,
+                'trend_evolution': trend_evolution,
+                'synthesis': synthesis_text,
+                'key_insights': [
+                    f"Analyzed {len(consumer_insights)} consumer behavior clusters",
+                    f"Tracked {len(trend_summaries)} trend evolution periods",
+                    f"Focused on {target_market} market consumer patterns"
+                ],
+                'integration_timestamp': datetime.now().isoformat()
+            }
+            
+        except Exception as e:
+            logger.error(f"Error synthesizing customer mapping insights: {e}")
+            return {
+                'error': str(e),
+                'synthesis': 'Failed to synthesize customer mapping insights',
+                'integration_timestamp': datetime.now().isoformat()
+            }
 
     async def run(self, state: MarketResearchState) -> Dict[str, Any]:
         """Main entry point for the Consumer Analysis Agent."""

@@ -95,6 +95,11 @@ function App() {
     timestamp: Date;
   }>>([]);
   
+  // Enhanced 3C Analysis state for agent selection
+  const [selectedAgents, setSelectedAgents] = useState<string[]>([]);
+  const [analysisDepth, setAnalysisDepth] = useState<string>('comprehensive');
+  const [agentPerformance, setAgentPerformance] = useState<Record<string, string>>({});
+  
   // WebSocket connection status
   const [websocketConnected, setWebsocketConnected] = useState(false);
   const [currentJobId, setCurrentJobId] = useState<string | null>(null);
@@ -236,10 +241,25 @@ function App() {
       'Consumer Analysis': 'consumer_analysis',
       'Trend Analysis': 'trend_analysis',
       'Competitor Analysis': 'competitor_analysis',
+      'SWOT Analysis': 'swot_analysis',
+      'Customer Mapping': 'customer_mapping',
       'Opportunity Analysis': 'opportunity_analysis',
       'Synthesis': 'synthesis',
       'Report Generation': 'report_generation'
     };
+
+    // Update agent performance tracking
+    if (statusData.result?.agent_performance) {
+      setAgentPerformance(statusData.result.agent_performance);
+    }
+
+    // Update analysis configuration from server response
+    if (statusData.result?.selected_agents) {
+      setSelectedAgents(statusData.result.selected_agents);
+    }
+    if (statusData.result?.analysis_depth) {
+      setAnalysisDepth(statusData.result.analysis_depth);
+    }
 
     // Update current phase
     if (statusData.result?.step) {
@@ -261,6 +281,7 @@ function App() {
       setOutput({
         summary: "",
         details: {
+          report_content: statusData.result.report || "",
           report: statusData.result.report,
         },
       });
@@ -827,6 +848,11 @@ function App() {
     setOriginalCompanyName(formData.company || formData.target_market);
     setHasScrolledToStatus(false);
     setThreeCStartTime(new Date());
+    
+    // Capture agent selection data
+    setSelectedAgents(formData.selected_agents || []);
+    setAnalysisDepth(formData.analysis_depth || 'comprehensive');
+    setAgentPerformance({}); // Reset agent performance
 
     try {
       const url = `${API_URL}/research/3c-analysis`;
@@ -1102,11 +1128,15 @@ function App() {
           key="3c-progress"
           analysisState={threeCAnalysisState}
           currentPhase={threeCCurrentPhase}
-          startTime={threeCStartTime}
+          startTime={threeCStartTime || undefined}
           errors={threeCErrors}
-          isComplete={isComplete}
+          isResetting={false}
           glassStyle={glassStyle}
           loaderColor={loaderColor}
+          websocketConnected={websocketConnected}
+          selectedAgents={selectedAgents}
+          analysisDepth={analysisDepth}
+          agentPerformance={agentPerformance}
         />
       );
     }
