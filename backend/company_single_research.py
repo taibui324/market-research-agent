@@ -11,7 +11,9 @@ from .nodes.collector import Collector
 from .nodes.curator import Curator
 from .nodes.editor import Editor
 from .nodes.enricher import Enricher
-from .nodes.competitor_analysis import CompetitorAnalysis  # New competitor analysis node
+from .nodes.competitor_analysis import (
+    CompetitorAnalysis,
+)  # New competitor analysis node
 from .nodes.swot_analysis import SwotAnalysis  # New competitor analysis node
 from .nodes.researchers import (
     CompanyAnalyzer,
@@ -22,12 +24,22 @@ from .nodes.researchers import (
 
 logger = logging.getLogger(__name__)
 
+
 class Graph:
-    def __init__(self, company=None, company_url=None, industry=None, hq_location=None, 
-                 product_category=None, competitors=None, websocket_manager=None, job_id=None):
+    def __init__(
+        self,
+        company=None,
+        company_url=None,
+        industry=None,
+        hq_location=None,
+        product_category=None,
+        competitors=None,
+        websocket_manager=None,
+        job_id=None,
+    ):
         """
         Initialize the research workflow for a main company with competitors.
-        
+
         Args:
             company: Main company name
             company_url: Main company URL
@@ -52,8 +64,10 @@ class Graph:
             websocket_manager=websocket_manager,
             job_id=job_id,
             messages=[
-                SystemMessage(content=f"Expert researcher starting investigation for {company} and {len(competitors or [])} competitors")
-            ]
+                SystemMessage(
+                    content=f"Expert researcher starting investigation for {company} and {len(competitors or [])} competitors"
+                )
+            ],
         )
 
         # Initialize nodes with WebSocket manager and job ID
@@ -91,18 +105,22 @@ class Graph:
         self.workflow.add_node("briefing", self.briefing.run)
         self.workflow.add_node("editor", self.editor.run)
         self.workflow.add_node("swot", self.swot.run)  # SWOT analysis node
-        self.workflow.add_node("competitor_analysis", self.competitor_analysis.run)  # Competitor analysis node
+        self.workflow.add_node(
+            "competitor_analysis", self.competitor_analysis.run
+        )  # Competitor analysis node
 
         # Configure workflow edges
         self.workflow.set_entry_point("grounding")
         # Set finish point for final report
-        self.workflow.set_finish_point("competitor_analysis")  # Competitor analysis as final report
+        self.workflow.set_finish_point(
+            "competitor_analysis"
+        )  # Competitor analysis as final report
 
         research_nodes = [
-            "financial_analyst", 
+            "financial_analyst",
             "news_scanner",
-            "industry_analyst", 
-            "company_analyst"
+            "industry_analyst",
+            "company_analyst",
         ]
 
         # Connect grounding to all research nodes
@@ -114,7 +132,7 @@ class Graph:
         self.workflow.add_edge("collector", "curator")
         self.workflow.add_edge("curator", "enricher")
         self.workflow.add_edge("enricher", "briefing")
-        self.workflow.add_edge("briefing", "editor")    # Connect briefing to editor
+        self.workflow.add_edge("briefing", "editor")  # Connect briefing to editor
 
         # Run both analyses in parallel after editor
         self.workflow.add_edge("editor", "swot")  # Connect editor to SWOT
@@ -126,10 +144,7 @@ class Graph:
         """Execute the research workflow"""
         compiled_graph = self.workflow.compile()
 
-        async for state in compiled_graph.astream(
-            self.input_state,
-            thread
-        ):
+        async for state in compiled_graph.astream(self.input_state, thread):
             if self.websocket_manager and self.job_id:
                 await self._handle_ws_update(state)
             yield state
@@ -141,13 +156,10 @@ class Graph:
             "data": {
                 "current_node": state.get("current_node", "unknown"),
                 "progress": state.get("progress", 0),
-                "keys": list(state.keys())
-            }
+                "keys": list(state.keys()),
+            },
         }
-        await self.websocket_manager.broadcast_to_job(
-            self.job_id,
-            update
-        )
+        await self.websocket_manager.broadcast_to_job(self.job_id, update)
 
     def compile(self):
         graph = self.workflow.compile()

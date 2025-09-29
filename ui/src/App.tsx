@@ -1060,7 +1060,8 @@ function App() {
           output={{
             summary: output.summary,
             details: {
-              report_content: output.details.report_content || ''
+              report_content: output.details.report_content || '',
+              competitor_analyses: output.details.competitor_analyses || {}
             }
           }}
           isResetting={isResetting}
