@@ -18,6 +18,7 @@ from typing import Optional, List
 from backend.company_single_research import Graph
 from backend.nodes.orchestrator import ThreeCAnalysisOrchestrator
 from backend.services.mongodb import MongoDBService
+from backend.services.mock_mongodb import MockMongoDBService
 from backend.services.pdf_service import PDFService
 from backend.services.websocket_manager import WebSocketManager
 
@@ -89,7 +90,12 @@ if mongo_uri := os.getenv("MONGODB_URI"):
         mongodb = MongoDBService(mongo_uri)
         logger.info("MongoDB integration enabled")
     except Exception as e:
-        logger.warning(f"Failed to initialize MongoDB: {e}. Continuing without persistence.")
+        logger.warning(f"Failed to initialize MongoDB: {e}. Using mock service.")
+        mongodb = MockMongoDBService()
+else:
+    # Use mock service for development
+    mongodb = MockMongoDBService()
+    logger.info("Using MockMongoDBService for development")
 
 
 # Updated data models for main company with competitors
@@ -198,12 +204,8 @@ async def market_research(data: MarketResearchRequest):
 async def process_research(job_id: str, data: ResearchRequest):
     """Process research workflow for company analysis"""
     try:
-        # Initialize MongoDB if available
-        mongodb = None
-        try:
-            mongodb = MongoDBService()
-        except Exception as e:
-            logger.warning(f"MongoDB not available: {e}")
+        # Use global MongoDB instance (real or mock)
+        global mongodb
 
         if mongodb:
             mongodb.create_job(job_id, {
@@ -346,15 +348,11 @@ async def process_research(job_id: str, data: ResearchRequest):
 async def process_3c_analysis(job_id: str, data: MarketResearchRequest):
     """Process 3C market research analysis workflow"""
     try:
-        # Initialize MongoDB if available
-        mongodb = None
-        try:
-            mongodb = MongoDBService()
-        except Exception as e:
-            logger.warning(f"MongoDB not available: {e}")
+        # Use global MongoDB instance (real or mock)
+        global mongodb
 
         if mongodb:
-            mongodb.create_job(job_id, data.dict())
+            mongodb.create_job(job_id, data.model_dump())
         await asyncio.sleep(1)  # Allow WebSocket connection
 
         await manager.send_status_update(
@@ -660,12 +658,9 @@ async def get_research_report(job_id: str):
     
     Returns the comprehensive research report if the job has been completed.
     """
-    # Initialize MongoDB if available
-    mongodb = None
-    try:
-        mongodb = MongoDBService()
-    except Exception as e:
-        logger.warning(f"MongoDB not available: {e}")
+    # Use global MongoDB instance (real or mock)
+    global mongodb
+    if not mongodb:
         raise HTTPException(status_code=500, detail="Database not available")
     
     # Query the database for the report
