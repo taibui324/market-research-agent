@@ -19,6 +19,9 @@ interface ThreeCAnalysisProgressProps {
   }>;
   websocketConnected?: boolean;
   onRetryConnection?: () => void;
+  selectedAgents?: string[];
+  analysisDepth?: string;
+  agentPerformance?: Record<string, string>;
 }
 
 const ThreeCAnalysisProgress: React.FC<ThreeCAnalysisProgressProps> = ({
@@ -30,7 +33,10 @@ const ThreeCAnalysisProgress: React.FC<ThreeCAnalysisProgressProps> = ({
   startTime,
   errors = [],
   websocketConnected = true,
-  onRetryConnection
+  onRetryConnection,
+  selectedAgents = [],
+  analysisDepth = 'comprehensive',
+  agentPerformance = {}
 }) => {
   const [currentTime, setCurrentTime] = useState(new Date());
 
@@ -42,73 +48,99 @@ const ThreeCAnalysisProgress: React.FC<ThreeCAnalysisProgressProps> = ({
 
     return () => clearInterval(interval);
   }, []);
-  const phases: Array<{
-    key: ThreeCProgressPhase;
-    label: string;
-    description: string;
-    icon: string;
-  }> = [
-    {
-      key: 'query_generation',
-      label: 'Query Generation',
-      description: 'Generating market research queries',
-      icon: '🎯'
-    },
-    {
-      key: 'data_collection',
-      label: 'Data Collection',
-      description: 'Collecting market research data',
-      icon: '📊'
-    },
-    {
-      key: 'data_curation',
-      label: 'Data Curation',
-      description: 'Filtering and curating data quality',
-      icon: '🔍'
-    },
-    {
-      key: 'consumer_analysis',
+  // All available agent phases
+  const allAgentPhases = {
+    'consumer_analysis': {
+      key: 'consumer_analysis' as ThreeCProgressPhase,
       label: 'Consumer Analysis',
       description: 'Analyzing consumer insights and behavior',
       icon: '👥'
     },
-    {
-      key: 'trend_analysis',
+    'trend_analysis': {
+      key: 'trend_analysis' as ThreeCProgressPhase,
       label: 'Trend Analysis',
       description: 'Identifying market trends and predictions',
       icon: '📈'
     },
-    {
-      key: 'competitor_analysis',
+    'competitor_analysis': {
+      key: 'competitor_analysis' as ThreeCProgressPhase,
       label: 'Competitor Analysis',
       description: 'Analyzing competitive landscape',
       icon: '🏢'
     },
-    {
-      key: 'opportunity_analysis',
-      label: 'Opportunity Analysis',
-      description: 'Identifying market opportunities',
-      icon: '💡'
+    'swot_analysis': {
+      key: 'swot_analysis' as ThreeCProgressPhase,
+      label: 'SWOT Analysis',
+      description: 'Analyzing strengths, weaknesses, opportunities, threats',
+      icon: '⚖️'
     },
-    {
-      key: 'synthesis',
-      label: 'Synthesis',
-      description: 'Synthesizing analysis results',
-      icon: '🔄'
-    },
-    {
-      key: 'report_generation',
-      label: 'Report Generation',
-      description: 'Generating comprehensive report',
-      icon: '📄'
-    },
-    {
-      key: 'complete',
-      label: 'Complete',
-      description: '3C Analysis completed successfully',
-      icon: '✅'
+    'customer_mapping': {
+      key: 'customer_mapping' as ThreeCProgressPhase,
+      label: 'Customer Mapping',
+      description: 'Mapping customer journey and personas',
+      icon: '🗺️'
     }
-  ];
+  };
+
+  // Build dynamic phases based on selected agents
+  const buildDynamicPhases = () => {
+    const corePhases = [
+      {
+        key: 'query_generation' as ThreeCProgressPhase,
+        label: 'Query Generation',
+        description: 'Generating market research queries',
+        icon: '🎯'
+      },
+      {
+        key: 'data_collection' as ThreeCProgressPhase,
+        label: 'Data Collection',
+        description: 'Collecting market research data',
+        icon: '📊'
+      },
+      {
+        key: 'data_curation' as ThreeCProgressPhase,
+        label: 'Data Curation',
+        description: 'Filtering and curating data quality',
+        icon: '🔍'
+      }
+    ];
+
+    // Add selected agent phases
+    const agentPhases = selectedAgents
+      .filter(agentId => allAgentPhases[agentId as keyof typeof allAgentPhases])
+      .map(agentId => allAgentPhases[agentId as keyof typeof allAgentPhases]);
+
+    const endPhases = [
+      {
+        key: 'opportunity_analysis' as ThreeCProgressPhase,
+        label: 'Opportunity Analysis',
+        description: 'Identifying market opportunities',
+        icon: '💡'
+      },
+      {
+        key: 'synthesis' as ThreeCProgressPhase,
+        label: 'Synthesis',
+        description: 'Synthesizing analysis results',
+        icon: '🔄'
+      },
+      {
+        key: 'report_generation' as ThreeCProgressPhase,
+        label: 'Report Generation',
+        description: 'Generating comprehensive report',
+        icon: '📄'
+      },
+      {
+        key: 'complete' as ThreeCProgressPhase,
+        label: 'Complete',
+        description: '3C Analysis completed successfully',
+        icon: '✅'
+      }
+    ];
+
+    return [...corePhases, ...agentPhases, ...endPhases];
+  };
+
+  const phases = buildDynamicPhases();
 
   const getPhaseStatus = (phase: ThreeCProgressPhase) => {
     if (!currentPhase) return 'pending';
@@ -317,6 +349,103 @@ const ThreeCAnalysisProgress: React.FC<ThreeCAnalysisProgressProps> = ({
               ... and {errors.length - 5} more issues
             </div>
           )}
+        </div>
+      )}
+
+      {/* Agent Performance Section */}
+      {selectedAgents.length > 0 && (
+        <div className="mb-6">
+          <div className="flex items-center justify-between mb-3">
+            <h4 className="font-medium text-gray-800 flex items-center">
+              <span className="mr-2">🤖</span>
+              Agent Performance
+            </h4>
+            <span className="bg-gray-100 text-gray-700 px-2 py-1 rounded-full text-xs font-medium">
+              {analysisDepth} mode
+            </span>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {selectedAgents.map(agentId => {
+              const agentPhase = allAgentPhases[agentId as keyof typeof allAgentPhases];
+              const performance = agentPerformance[agentId] || 'pending';
+              const isActive = currentPhase === agentId;
+              const isCompleted = performance === 'completed';
+              const isFailed = performance === 'failed';
+              
+              if (!agentPhase) return null;
+              
+              return (
+                <div
+                  key={agentId}
+                  className={`
+                    p-3 rounded-lg border transition-all duration-200
+                    ${isActive ? 'border-blue-500 bg-blue-50' : 
+                      isCompleted ? 'border-green-500 bg-green-50' :
+                      isFailed ? 'border-red-500 bg-red-50' :
+                      'border-gray-200 bg-gray-50'
+                    }
+                  `}
+                >
+                  <div className="flex items-center space-x-3">
+                    <div className={`
+                      w-8 h-8 rounded-full flex items-center justify-center text-sm
+                      ${isActive ? 'bg-blue-500 text-white animate-pulse' :
+                        isCompleted ? 'bg-green-500 text-white' :
+                        isFailed ? 'bg-red-500 text-white' :
+                        'bg-gray-300 text-gray-600'
+                      }
+                    `}>
+                      {isCompleted ? '✓' : isFailed ? '✗' : agentPhase.icon}
+                    </div>
+                    <div className="flex-1">
+                      <div className="font-medium text-gray-900 text-sm">
+                        {agentPhase.label}
+                      </div>
+                      <div className="text-xs text-gray-600 mt-1">
+                        {isActive ? 'In Progress...' :
+                         isCompleted ? 'Completed' :
+                         isFailed ? 'Failed' :
+                         'Pending'
+                        }
+                      </div>
+                    </div>
+                    {isActive && (
+                      <div className="w-4 h-4">
+                        <div className="animate-spin rounded-full h-4 w-4 border-2 border-blue-500 border-t-transparent"></div>
+                      </div>
+                    )}
+                  </div>
+                  
+                  {/* Agent Progress Bar */}
+                  {(isActive || isCompleted) && (
+                    <div className="mt-2">
+                      <div className={`
+                        w-full rounded-full h-2
+                        ${isActive ? 'bg-blue-200' :
+                          isCompleted ? 'bg-green-200' :
+                          'bg-gray-200'
+                        }
+                      `}>
+                        <div
+                          className={`
+                            h-2 rounded-full transition-all duration-300
+                            ${isActive ? 'bg-blue-500' :
+                              isCompleted ? 'bg-green-500' :
+                              'bg-gray-400'
+                            }
+                          `}
+                          style={{ 
+                            width: isCompleted ? '100%' : 
+                                   isActive ? `${getPhaseProgress(agentId as ThreeCProgressPhase)}%` : '0%' 
+                          }}
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
 

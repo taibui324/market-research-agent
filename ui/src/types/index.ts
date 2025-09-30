@@ -58,6 +58,7 @@ export type ResearchOutput = {
   summary: string;
   details: {
     report_content: string;
+    report?: string;  // Enhanced API returns report field
     competitor_analyses?: CompetitorAnalyses;
   };
 };
@@ -132,13 +133,25 @@ export type AnalysisType = 'company_research' | '3c_analysis';
 
 export type MarketResearchRequest = {
   analysis_type: AnalysisType;
+  analysis_depth?: 'comprehensive' | 'focused' | 'quick';
   target_market: string;
   market_segment?: string;
   company?: string;
   company_url?: string;
   industry?: string;
   hq_location?: string;
+  selected_agents?: string[];
+  enable_parallel_execution?: boolean;
 };
+
+export type AgentType = 
+  | 'consumer_analysis'
+  | 'trend_analysis'
+  | 'competitor_analysis'
+  | 'swot_analysis'
+  | 'customer_mapping';
+
+export type AnalysisDepth = 'comprehensive' | 'focused' | 'quick';
 
 export type ThreeCAnalysisState = {
   status: string;
@@ -190,6 +203,8 @@ export type ThreeCProgressPhase =
   | 'consumer_analysis'
   | 'trend_analysis'
   | 'competitor_analysis'
+  | 'swot_analysis'
+  | 'customer_mapping'
   | 'opportunity_analysis'
   | 'synthesis'
   | 'report_generation'

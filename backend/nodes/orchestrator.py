@@ -18,10 +18,11 @@ from ..utils.monitoring import (
 )
 from .researchers.consumer import ConsumerAnalysisAgent
 from .researchers.trend import TrendAnalysisAgent
+from .researchers.competitor import CompetitorAnalysisAgent
+from .researchers.customer_mapping import CustomerMappingResearcher
 from .market_collector import MarketDataCollector
 from .market_curator import MarketDataCurator
-# Note: CompetitorAnalysisAgent will be imported once task 4 is complete
-# from .researchers.competitor import CompetitorAnalysisAgent
+from .swot_analysis_agent import SwotAnalysisAgent
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +65,18 @@ class AgentFailureHandler:
             state['competitive_positioning'] = {}
             state['feature_comparisons'] = []
             state['market_gaps'] = []
+        elif agent_name == "swot_analysis":
+            state['swot_analysis'] = {
+                "status": "failed", 
+                "error": str(error),
+                "timestamp": datetime.now().isoformat()
+            }
+        elif agent_name == "customer_mapping":
+            state['customer_mapping_results'] = {
+                "status": "failed", 
+                "error": str(error),
+                "timestamp": datetime.now().isoformat()
+            }
         
         # Notify via WebSocket
         if self.websocket_manager and self.job_id:
@@ -79,20 +92,24 @@ class AgentFailureHandler:
 
 class ThreeCAnalysisOrchestrator:
     """
-    3C Analysis Orchestrator that coordinates Consumer, Company, and Competitor analysis agents.
-    Extends existing Graph architecture to support specialized market research workflow.
+    Enhanced 3C Analysis Orchestrator that coordinates Consumer, Company, and Competitor analysis agents.
+    Supports intelligent agent selection, parallel execution, and comprehensive error handling.
     """
     
-    def __init__(self, websocket_manager: Optional[WebSocketManager] = None, job_id: Optional[str] = None):
+    def __init__(self, websocket_manager: Optional[WebSocketManager] = None, job_id: Optional[str] = None, 
+                 analysis_type: str = "comprehensive", selected_agents: Optional[List[str]] = None):
         self.websocket_manager = websocket_manager
         self.job_id = job_id
+        self.analysis_type = analysis_type
+        self.selected_agents = selected_agents or self._get_default_agents(analysis_type)
         self.failure_handler = AgentFailureHandler(websocket_manager, job_id)
         
-        # Initialize specialized agents
+        # Initialize all available agents
         self.consumer_agent = ConsumerAnalysisAgent()
         self.trend_agent = TrendAnalysisAgent()
-        # TODO: Initialize competitor agent once task 4 is complete
-        # self.competitor_agent = CompetitorAnalysisAgent()
+        self.competitor_agent = CompetitorAnalysisAgent()
+        self.swot_agent = SwotAnalysisAgent()
+        self.customer_mapping_agent = CustomerMappingResearcher()
         
         # Initialize enhanced data pipeline components
         self.data_collector = MarketDataCollector()
@@ -101,49 +118,91 @@ class ThreeCAnalysisOrchestrator:
         # Initialize report generator
         self.report_generator = MarketResearchReportGenerator()
         
-        # Build the 3C analysis workflow
-        self._build_3c_workflow()
+        # Build the enhanced workflow based on selected agents
+        self._build_enhanced_workflow()
     
-    def _build_3c_workflow(self):
-        """Configure the 3C analysis state graph workflow"""
+    def _get_default_agents(self, analysis_type: str) -> List[str]:
+        """Get default agent selection based on analysis type."""
+        if analysis_type == "comprehensive":
+            return ["consumer_analysis", "trend_analysis", "competitor_analysis", "swot_analysis", "customer_mapping"]
+        elif analysis_type == "focused":
+            return ["consumer_analysis", "trend_analysis", "competitor_analysis"]
+        elif analysis_type == "quick":
+            return ["consumer_analysis", "trend_analysis"]
+        else:
+            return ["consumer_analysis", "trend_analysis", "competitor_analysis"]
+    
+    def _build_enhanced_workflow(self):
+        """Configure the enhanced 3C analysis state graph workflow with intelligent agent selection."""
         self.workflow = StateGraph(MarketResearchState)
         
-        # Add nodes for 3C analysis workflow
+        # Core workflow nodes (always included)
         self.workflow.add_node("query_generation", self._generate_market_queries)
         self.workflow.add_node("data_collection", self._collect_market_data)
         self.workflow.add_node("data_curation", self._curate_market_data)
-        self.workflow.add_node("consumer_analysis", self._run_consumer_analysis)
-        self.workflow.add_node("trend_analysis", self._run_trend_analysis)
-        # TODO: Add competitor analysis node once task 4 is complete
-        # self.workflow.add_node("competitor_analysis", self._run_competitor_analysis)
+        
+        # Agent-specific nodes (conditional based on selection)
+        if "consumer_analysis" in self.selected_agents:
+            self.workflow.add_node("consumer_analysis", self._run_consumer_analysis)
+        
+        if "trend_analysis" in self.selected_agents:
+            self.workflow.add_node("trend_analysis", self._run_trend_analysis)
+        
+        if "competitor_analysis" in self.selected_agents:
+            self.workflow.add_node("competitor_analysis", self._run_competitor_analysis)
+        
+        if "swot_analysis" in self.selected_agents:
+            self.workflow.add_node("swot_analysis", self._run_swot_analysis)
+        
+        if "customer_mapping" in self.selected_agents:
+            self.workflow.add_node("customer_mapping", self._run_customer_mapping)
+        
+        # Always include synthesis and reporting
         self.workflow.add_node("opportunity_analysis", self._run_opportunity_analysis)
         self.workflow.add_node("synthesis", self._synthesize_results)
         self.workflow.add_node("report_generation", self._generate_final_report)
         
-        # Configure workflow edges - SEQUENTIAL to avoid concurrent state updates
+        # Configure workflow edges with intelligent dependency management
         self.workflow.set_entry_point("query_generation")
         self.workflow.set_finish_point("report_generation")
         
-        # Connect query generation to data collection
+        # Core pipeline edges
         self.workflow.add_edge("query_generation", "data_collection")
-        
-        # Connect data collection to curation
         self.workflow.add_edge("data_collection", "data_curation")
         
-        # Run analysis agents sequentially to avoid state conflicts
-        self.workflow.add_edge("data_curation", "consumer_analysis")
-        self.workflow.add_edge("consumer_analysis", "trend_analysis")
-        # TODO: Add competitor analysis edge once task 4 is complete
-        # self.workflow.add_edge("trend_analysis", "competitor_analysis")
-        # self.workflow.add_edge("competitor_analysis", "opportunity_analysis")
+        # Analysis agents edges with dependency management
+        last_analysis_step = "data_curation"
         
-        # Connect final analysis to opportunity analysis
-        self.workflow.add_edge("trend_analysis", "opportunity_analysis")
+        # Customer mapping can run in parallel with consumer analysis
+        if "customer_mapping" in self.selected_agents and "consumer_analysis" in self.selected_agents:
+            self.workflow.add_edge("data_curation", "customer_mapping")
+            self.workflow.add_edge("customer_mapping", "consumer_analysis")
+            last_analysis_step = "consumer_analysis"
+        elif "consumer_analysis" in self.selected_agents:
+            self.workflow.add_edge(last_analysis_step, "consumer_analysis")
+            last_analysis_step = "consumer_analysis"
+        elif "customer_mapping" in self.selected_agents:
+            self.workflow.add_edge(last_analysis_step, "customer_mapping")
+            last_analysis_step = "customer_mapping"
         
-        # Connect opportunity analysis to synthesis
+        # Trend analysis depends on consumer insights for better analysis
+        if "trend_analysis" in self.selected_agents:
+            self.workflow.add_edge(last_analysis_step, "trend_analysis")
+            last_analysis_step = "trend_analysis"
+        
+        # Competitor analysis can run after trend analysis
+        if "competitor_analysis" in self.selected_agents:
+            self.workflow.add_edge(last_analysis_step, "competitor_analysis")
+            last_analysis_step = "competitor_analysis"
+        
+        # SWOT analysis should run after competitor analysis for best results
+        if "swot_analysis" in self.selected_agents:
+            self.workflow.add_edge(last_analysis_step, "swot_analysis")
+            last_analysis_step = "swot_analysis"
+        
+        # Connect to opportunity analysis and final steps
+        self.workflow.add_edge(last_analysis_step, "opportunity_analysis")
         self.workflow.add_edge("opportunity_analysis", "synthesis")
-        
-        # Connect synthesis to report generation
         self.workflow.add_edge("synthesis", "report_generation")
     
     async def run(self, state: MarketResearchState) -> AsyncIterator[Dict[str, Any]]:
@@ -633,6 +692,137 @@ class ThreeCAnalysisOrchestrator:
         
         return state
     
+    async def _run_competitor_analysis(self, state: MarketResearchState) -> MarketResearchState:
+        """Execute competitor analysis with error handling"""
+        try:
+            logger.info("Starting competitor analysis")
+            
+            if self.websocket_manager and self.job_id:
+                await self.websocket_manager.send_status_update(
+                    job_id=self.job_id,
+                    status="processing",
+                    message="Starting competitor analysis",
+                    result={"step": "Competitor Analysis", "status": "starting"}
+                )
+            
+            # Pass curated data to competitor analysis agent
+            curated_data = state.get('curated_market_data', {})
+            if curated_data.get('status') not in ['failed', 'skipped']:
+                state['enhanced_competitor_data'] = curated_data.get('competitor_data', {})
+            
+            # Run competitor analysis agent
+            result = await self.competitor_agent.run(state)
+            
+            # Update state with competitor analysis results
+            if isinstance(result, dict):
+                # Update competitor-specific keys
+                competitor_keys = ['competitor_landscape', 'competitive_positioning', 'feature_comparisons', 'market_gaps']
+                for key in competitor_keys:
+                    if key in result:
+                        state[key] = result[key]
+            
+            logger.info("Competitor analysis completed successfully")
+            
+            # Track workflow metrics
+            await self._track_workflow_metrics(state, "competitor_analysis")
+            
+            if self.websocket_manager and self.job_id:
+                await self.websocket_manager.send_status_update(
+                    job_id=self.job_id,
+                    status="processing",
+                    message="Competitor analysis completed",
+                    result={"step": "Competitor Analysis", "status": "completed"}
+                )
+            
+        except Exception as e:
+            logger.error(f"Competitor analysis failed: {e}")
+            state = await self.failure_handler.handle_agent_failure("competitor_analysis", e, state)
+        
+        return state
+    
+    async def _run_swot_analysis(self, state: MarketResearchState) -> MarketResearchState:
+        """Execute SWOT analysis with error handling"""
+        try:
+            logger.info("Starting SWOT analysis")
+            
+            if self.websocket_manager and self.job_id:
+                await self.websocket_manager.send_status_update(
+                    job_id=self.job_id,
+                    status="processing",
+                    message="Starting SWOT analysis",
+                    result={"step": "SWOT Analysis", "status": "starting"}
+                )
+            
+            # Run SWOT analysis agent
+            result = await self.swot_agent.run(state)
+            
+            # Update state with SWOT analysis results
+            if isinstance(result, dict):
+                state['swot_analysis'] = result
+            
+            logger.info("SWOT analysis completed successfully")
+            
+            # Track workflow metrics
+            await self._track_workflow_metrics(state, "swot_analysis")
+            
+            if self.websocket_manager and self.job_id:
+                await self.websocket_manager.send_status_update(
+                    job_id=self.job_id,
+                    status="processing",
+                    message="SWOT analysis completed",
+                    result={"step": "SWOT Analysis", "status": "completed"}
+                )
+            
+        except Exception as e:
+            logger.error(f"SWOT analysis failed: {e}")
+            state = await self.failure_handler.handle_agent_failure("swot_analysis", e, state)
+        
+        return state
+    
+    async def _run_customer_mapping(self, state: MarketResearchState) -> MarketResearchState:
+        """Execute customer mapping analysis with error handling"""
+        try:
+            logger.info("Starting customer mapping analysis")
+            
+            if self.websocket_manager and self.job_id:
+                await self.websocket_manager.send_status_update(
+                    job_id=self.job_id,
+                    status="processing",
+                    message="Starting customer mapping analysis",
+                    result={"step": "Customer Mapping", "status": "starting"}
+                )
+            
+            # Run customer mapping agent
+            target_market = state.get('target_market', 'japanese_curry')
+            industry = state.get('industry', 'Food & Beverage')
+            
+            result = await self.customer_mapping_agent.research_customer_mapping(
+                state, industry=industry
+            )
+            
+            # Update state with customer mapping results
+            if isinstance(result, dict):
+                state['customer_mapping_results'] = result
+            
+            logger.info("Customer mapping analysis completed successfully")
+            
+            # Track workflow metrics
+            await self._track_workflow_metrics(state, "customer_mapping")
+            
+            if self.websocket_manager and self.job_id:
+                await self.websocket_manager.send_status_update(
+                    job_id=self.job_id,
+                    status="processing",
+                    message="Customer mapping analysis completed",
+                    result={"step": "Customer Mapping", "status": "completed"}
+                )
+            
+        except Exception as e:
+            logger.error(f"Customer mapping analysis failed: {e}")
+            state = await self.failure_handler.handle_agent_failure("customer_mapping", e, state)
+        
+        return state
+    
     @monitor_performance("opportunity_analysis", {"component": "3c_orchestrator"})
     async def _run_opportunity_analysis(self, state: MarketResearchState) -> MarketResearchState:
         """Execute opportunity analysis by synthesizing insights from other agents"""
@@ -1039,6 +1229,37 @@ Please check system logs for detailed error information.
                     {"job_id": job_id, "target_market": target_market}
                 )
             
+            # Track competitor analysis
+            if stage == "competitor_analysis":
+                competitor_landscape = state.get('competitor_landscape', {})
+                competitors_count = len(competitor_landscape.get('competitors', []))
+                performance_monitor.record_metric(
+                    "competitors_identified",
+                    competitors_count,
+                    {"job_id": job_id, "target_market": target_market}
+                )
+            
+            # Track SWOT analysis
+            if stage == "swot_analysis":
+                swot_analysis = state.get('swot_analysis', {})
+                market_swot = swot_analysis.get('market_swot_analysis', {})
+                swot_metrics = market_swot.get('swot_metrics', {})
+                performance_monitor.record_metric(
+                    "swot_quality_score",
+                    swot_metrics.get('swot_quality_score', 0),
+                    {"job_id": job_id, "target_market": target_market}
+                )
+            
+            # Track customer mapping
+            if stage == "customer_mapping":
+                customer_mapping = state.get('customer_mapping_results', {})
+                insights_count = len(customer_mapping.get('consumer_insights', []))
+                performance_monitor.record_metric(
+                    "customer_insights_count",
+                    insights_count,
+                    {"job_id": job_id, "target_market": target_market}
+                )
+            
             # Track opportunity identification
             if stage == "opportunity_analysis":
                 opportunities = state.get('opportunities', [])
@@ -1120,15 +1341,19 @@ Please check system logs for detailed error information.
         await self.websocket_manager.broadcast_to_job(self.job_id, update)
     
     def _get_current_step(self, state: Dict[str, Any]) -> str:
-        """Determine current workflow step based on state"""
+        """Determine current workflow step based on state and selected agents"""
         if 'report' in state:
             return "report_generation"
         elif 'analysis_synthesis' in state:
             return "synthesis"
         elif 'opportunities' in state:
             return "opportunity_analysis"
-        elif 'market_trends' in state and 'consumer_insights' in state:
-            return "analysis_complete"
+        elif 'swot_analysis' in state:
+            return "swot_analysis"
+        elif 'competitor_landscape' in state:
+            return "competitor_analysis"
+        elif 'customer_mapping_results' in state:
+            return "customer_mapping"
         elif 'market_trends' in state:
             return "trend_analysis"
         elif 'consumer_insights' in state:
@@ -1143,28 +1368,41 @@ Please check system logs for detailed error information.
             return "initialization"
     
     def _calculate_progress(self, state: Dict[str, Any]) -> float:
-        """Calculate workflow progress percentage"""
+        """Calculate workflow progress percentage based on selected agents"""
         completed_steps = 0
-        total_steps = 8  # query_generation, data_collection, data_curation, consumer_analysis, trend_analysis, opportunity_analysis, synthesis, report_generation
         
-        if 'market_queries' in state:
-            completed_steps += 1
-        if 'raw_market_data' in state:
-            completed_steps += 1
-        if 'curated_market_data' in state:
-            completed_steps += 1
-        if 'consumer_insights' in state:
-            completed_steps += 1
-        if 'market_trends' in state:
-            completed_steps += 1
-        if 'opportunities' in state:
-            completed_steps += 1
-        if 'analysis_synthesis' in state:
-            completed_steps += 1
-        if 'report' in state:
-            completed_steps += 1
+        # Core workflow steps (always present)
+        base_steps = [
+            ('market_queries', 'query_generation'),
+            ('raw_market_data', 'data_collection'),
+            ('curated_market_data', 'data_curation'),
+            ('opportunities', 'opportunity_analysis'),
+            ('analysis_synthesis', 'synthesis'),
+            ('report', 'report_generation')
+        ]
         
-        return (completed_steps / total_steps) * 100
+        # Agent-specific steps (conditional)
+        agent_steps = []
+        if "consumer_analysis" in self.selected_agents:
+            agent_steps.append(('consumer_insights', 'consumer_analysis'))
+        if "trend_analysis" in self.selected_agents:
+            agent_steps.append(('market_trends', 'trend_analysis'))
+        if "competitor_analysis" in self.selected_agents:
+            agent_steps.append(('competitor_landscape', 'competitor_analysis'))
+        if "swot_analysis" in self.selected_agents:
+            agent_steps.append(('swot_analysis', 'swot_analysis'))
+        if "customer_mapping" in self.selected_agents:
+            agent_steps.append(('customer_mapping_results', 'customer_mapping'))
+        
+        all_steps = base_steps + agent_steps
+        total_steps = len(all_steps)
+        
+        # Count completed steps
+        for state_key, step_name in all_steps:
+            if state_key in state:
+                completed_steps += 1
+        
+        return (completed_steps / total_steps) * 100 if total_steps > 0 else 0
     
     def compile(self):
         """Compile the 3C analysis workflow graph"""

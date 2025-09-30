@@ -13,11 +13,12 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 
 from backend.company_single_research import Graph
 from backend.nodes.orchestrator import ThreeCAnalysisOrchestrator
 from backend.services.mongodb import MongoDBService
+from backend.services.mock_mongodb import MockMongoDBService
 from backend.services.pdf_service import PDFService
 from backend.services.websocket_manager import WebSocketManager
 
@@ -89,7 +90,12 @@ if mongo_uri := os.getenv("MONGODB_URI"):
         mongodb = MongoDBService(mongo_uri)
         logger.info("MongoDB integration enabled")
     except Exception as e:
-        logger.warning(f"Failed to initialize MongoDB: {e}. Continuing without persistence.")
+        logger.warning(f"Failed to initialize MongoDB: {e}. Using mock service.")
+        mongodb = MockMongoDBService()
+else:
+    # Use mock service for development
+    mongodb = MockMongoDBService()
+    logger.info("Using MockMongoDBService for development")
 
 
 # Updated data models for main company with competitors
@@ -110,14 +116,17 @@ class ResearchRequest(BaseModel):
     competitors: List[CompetitorData] = []
 
 class MarketResearchRequest(BaseModel):
-    """Request model for 3C market research analysis"""
+    """Enhanced request model for 3C market research analysis"""
     analysis_type: str = "3c_analysis"  # Type of analysis to perform
+    analysis_depth: str = "comprehensive"  # comprehensive, focused, quick
     target_market: str = "japanese_curry"  # Market focus for analysis
     market_segment: Optional[str] = None  # Specific market segment
     company: Optional[str] = None  # Optional company context
     company_url: Optional[str] = None  # Optional company URL
     industry: Optional[str] = None  # Optional industry context
     hq_location: Optional[str] = None  # Optional location context
+    selected_agents: Optional[List[str]] = None  # Specific agents to run
+    enable_parallel_execution: bool = False  # Enable parallel agent execution
 
 class PDFGenerationRequest(BaseModel):
     report_content: str
@@ -195,12 +204,8 @@ async def market_research(data: MarketResearchRequest):
 async def process_research(job_id: str, data: ResearchRequest):
     """Process research workflow for company analysis"""
     try:
-        # Initialize MongoDB if available
-        mongodb = None
-        try:
-            mongodb = MongoDBService()
-        except Exception as e:
-            logger.warning(f"MongoDB not available: {e}")
+        # Use global MongoDB instance (real or mock)
+        global mongodb
 
         if mongodb:
             mongodb.create_job(job_id, {
@@ -343,15 +348,11 @@ async def process_research(job_id: str, data: ResearchRequest):
 async def process_3c_analysis(job_id: str, data: MarketResearchRequest):
     """Process 3C market research analysis workflow"""
     try:
-        # Initialize MongoDB if available
-        mongodb = None
-        try:
-            mongodb = MongoDBService()
-        except Exception as e:
-            logger.warning(f"MongoDB not available: {e}")
+        # Use global MongoDB instance (real or mock)
+        global mongodb
 
         if mongodb:
-            mongodb.create_job(job_id, data.dict())
+            mongodb.create_job(job_id, data.model_dump())
         await asyncio.sleep(1)  # Allow WebSocket connection
 
         await manager.send_status_update(
@@ -363,10 +364,24 @@ async def process_3c_analysis(job_id: str, data: MarketResearchRequest):
         # Import MarketResearchState here to avoid circular imports
         from backend.classes.state import MarketResearchState
         
-        # Initialize 3C analysis orchestrator
+        # Initialize enhanced 3C analysis orchestrator with agent selection
+        selected_agents = data.selected_agents
+        if not selected_agents:
+            # Use default agents based on analysis depth
+            if data.analysis_depth == "comprehensive":
+                selected_agents = ["consumer_analysis", "trend_analysis", "competitor_analysis", "swot_analysis", "customer_mapping"]
+            elif data.analysis_depth == "focused":
+                selected_agents = ["consumer_analysis", "trend_analysis", "competitor_analysis"]
+            elif data.analysis_depth == "quick":
+                selected_agents = ["consumer_analysis", "trend_analysis"]
+            else:
+                selected_agents = ["consumer_analysis", "trend_analysis", "competitor_analysis"]
+        
         orchestrator = ThreeCAnalysisOrchestrator(
             websocket_manager=manager,
-            job_id=job_id
+            job_id=job_id,
+            analysis_type=data.analysis_depth,
+            selected_agents=selected_agents
         )
 
         # Create initial state for 3C analysis
@@ -447,8 +462,17 @@ async def process_3c_analysis(job_id: str, data: MarketResearchRequest):
                 result={
                     "report": report_content,
                     "analysis_type": "3c_analysis",
+                    "analysis_depth": data.analysis_depth,
                     "target_market": data.target_market,
-                    "analysis_summary": final_state.get('analysis_synthesis', {})
+                    "selected_agents": selected_agents,
+                    "analysis_summary": final_state.get('analysis_synthesis', {}),
+                    "agent_performance": {
+                        "consumer_analysis": "completed" if "consumer_analysis" in selected_agents else "skipped",
+                        "trend_analysis": "completed" if "trend_analysis" in selected_agents else "skipped",
+                        "competitor_analysis": "completed" if "competitor_analysis" in selected_agents else "skipped",
+                        "swot_analysis": "completed" if "swot_analysis" in selected_agents else "skipped",
+                        "customer_mapping": "completed" if "customer_mapping" in selected_agents else "skipped"
+                    }
                 }
             )
         else:
@@ -634,12 +658,9 @@ async def get_research_report(job_id: str):
     
     Returns the comprehensive research report if the job has been completed.
     """
-    # Initialize MongoDB if available
-    mongodb = None
-    try:
-        mongodb = MongoDBService()
-    except Exception as e:
-        logger.warning(f"MongoDB not available: {e}")
+    # Use global MongoDB instance (real or mock)
+    global mongodb
+    if not mongodb:
         raise HTTPException(status_code=500, detail="Database not available")
     
     # Query the database for the report

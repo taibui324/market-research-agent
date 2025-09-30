@@ -4,6 +4,7 @@ from .industry import IndustryAnalyzer
 from .company import CompanyAnalyzer
 from .consumer import ConsumerAnalysisAgent
 from .trend import TrendAnalysisAgent
+from .competitor import CompetitorAnalysisAgent
 from .customer_mapping import CustomerMappingResearcher
 
-__all__ = ["FinancialAnalyst", "NewsScanner", "IndustryAnalyzer", "CompanyAnalyzer", "ConsumerAnalysisAgent", "TrendAnalysisAgent", "CustomerMappingResearcher"] 
+__all__ = ["FinancialAnalyst", "NewsScanner", "IndustryAnalyzer", "CompanyAnalyzer", "ConsumerAnalysisAgent", "TrendAnalysisAgent", "CompetitorAnalysisAgent", "CustomerMappingResearcher"] 

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { MarketResearchRequest } from '../types';
+import { MarketResearchRequest, AnalysisDepth } from '../types';
 
 interface MarketAnalysisFormProps {
   onSubmit: (data: MarketResearchRequest) => void;
@@ -24,7 +24,10 @@ const MarketAnalysisForm: React.FC<MarketAnalysisFormProps> = ({
     company: '',
     company_url: '',
     industry: '',
-    hq_location: ''
+    hq_location: '',
+    analysis_depth: 'comprehensive' as AnalysisDepth,
+    selected_agents: [] as string[],
+    enable_parallel_execution: false
   });
 
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -52,6 +55,33 @@ const MarketAnalysisForm: React.FC<MarketAnalysisFormProps> = ({
     'Financial Services',
     'Telecommunications'
   ];
+
+  const analysisDepthOptions = [
+    { value: 'comprehensive' as AnalysisDepth, label: 'Comprehensive Analysis', description: 'All 5 agents: Consumer, Trend, Competitor, SWOT, Customer Mapping (~15-20 min)', agents: 5 },
+    { value: 'focused' as AnalysisDepth, label: 'Focused Analysis', description: '3 core agents: Consumer, Trend, Competitor (~10-12 min)', agents: 3 },
+    { value: 'quick' as AnalysisDepth, label: 'Quick Analysis', description: '2 essential agents: Consumer, Trend (~5-8 min)', agents: 2 }
+  ];
+
+  const availableAgents = [
+    { id: 'consumer_analysis', name: 'Consumer Analysis', description: 'Analyze consumer behavior, pain points, and personas', icon: '👥' },
+    { id: 'trend_analysis', name: 'Trend Analysis', description: 'Identify market trends and future predictions', icon: '📈' },
+    { id: 'competitor_analysis', name: 'Competitor Analysis', description: 'Analyze competitive landscape and positioning', icon: '🏢' },
+    { id: 'swot_analysis', name: 'SWOT Analysis', description: 'Comprehensive strengths, weaknesses, opportunities, threats', icon: '⚖️' },
+    { id: 'customer_mapping', name: 'Customer Mapping', description: 'Map customer journey and detailed persona development', icon: '🗺️' }
+  ];
+
+  const getDefaultAgentsForDepth = (depth: AnalysisDepth): string[] => {
+    switch (depth) {
+      case 'comprehensive':
+        return ['consumer_analysis', 'trend_analysis', 'competitor_analysis', 'swot_analysis', 'customer_mapping'];
+      case 'focused':
+        return ['consumer_analysis', 'trend_analysis', 'competitor_analysis'];
+      case 'quick':
+        return ['consumer_analysis', 'trend_analysis'];
+      default:
+        return ['consumer_analysis', 'trend_analysis', 'competitor_analysis'];
+    }
+  };
 
   const validateForm = () => {
     const newErrors: Record<string, string> = {};
@@ -98,18 +128,21 @@ const MarketAnalysisForm: React.FC<MarketAnalysisFormProps> = ({
 
     const requestData: MarketResearchRequest = {
       analysis_type: '3c_analysis',
+      analysis_depth: formData.analysis_depth,
       target_market: finalTargetMarket,
       market_segment: formData.market_segment || undefined,
       company: formData.company || undefined,
       company_url: formData.company_url || undefined,
       industry: formData.industry || undefined,
-      hq_location: formData.hq_location || undefined
+      hq_location: formData.hq_location || undefined,
+      selected_agents: formData.selected_agents.length > 0 ? formData.selected_agents : undefined,
+      enable_parallel_execution: formData.enable_parallel_execution
     };
 
     onSubmit(requestData);
   };
 
-  const handleInputChange = (field: string, value: string) => {
+  const handleInputChange = (field: string, value: string | boolean | string[]) => {
     setFormData(prev => ({ ...prev, [field]: value }));
     
     // Clear error when user starts typing
@@ -118,14 +151,48 @@ const MarketAnalysisForm: React.FC<MarketAnalysisFormProps> = ({
     }
 
     // Real-time validation for specific fields
-    if (field === 'company_url' && value && !isValidUrl(value)) {
+    if (field === 'company_url' && typeof value === 'string' && value && !isValidUrl(value)) {
       setErrors(prev => ({ ...prev, company_url: 'Please enter a valid URL' }));
     }
 
-    if (field === 'market_segment' && formData.target_market === 'custom' && value.length > 0 && value.length < 3) {
+    if (field === 'market_segment' && formData.target_market === 'custom' && typeof value === 'string' && value.length > 0 && value.length < 3) {
       setErrors(prev => ({ ...prev, market_segment: 'Market name must be at least 3 characters long' }));
     }
   };
+
+  const handleAnalysisDepthChange = (depth: AnalysisDepth) => {
+    const defaultAgents = getDefaultAgentsForDepth(depth);
+    setFormData(prev => ({
+      ...prev,
+      analysis_depth: depth,
+      selected_agents: defaultAgents
+    }));
+  };
+
+  const handleAgentToggle = (agentId: string) => {
+    setFormData(prev => ({
+      ...prev,
+      selected_agents: prev.selected_agents.includes(agentId)
+        ? prev.selected_agents.filter(id => id !== agentId)
+        : [...prev.selected_agents, agentId]
+    }));
+  };
+
+  const handleSelectAllAgents = () => {
+    const allAgentIds = availableAgents.map(agent => agent.id);
+    setFormData(prev => ({
+      ...prev,
+      selected_agents: prev.selected_agents.length === availableAgents.length ? [] : allAgentIds
+    }));
+  };
+
+  // Initialize selected agents based on analysis depth
+  React.useEffect(() => {
+    if (formData.selected_agents.length === 0) {
+      const defaultAgents = getDefaultAgentsForDepth(formData.analysis_depth);
+      setFormData(prev => ({ ...prev, selected_agents: defaultAgents }));
+    }
+  }, [formData.analysis_depth]);
 
   return (
     <div className={`${glassStyle.card} font-['DM_Sans']`}>
@@ -212,6 +279,116 @@ const MarketAnalysisForm: React.FC<MarketAnalysisFormProps> = ({
             </p>
           </div>
         )}
+
+        {/* Analysis Configuration */}
+        <div className="border-t pt-6">
+          <h4 className="text-md font-medium text-gray-800 mb-4">Analysis Configuration</h4>
+          
+          {/* Analysis Depth Selection */}
+          <div className="mb-6">
+            <label className="block text-sm font-medium text-gray-700 mb-3">
+              Analysis Depth *
+            </label>
+            <div className="space-y-3">
+              {analysisDepthOptions.map(option => (
+                <label
+                  key={option.value}
+                  className={`
+                    flex items-start space-x-3 p-4 rounded-lg border cursor-pointer transition-all duration-200
+                    ${formData.analysis_depth === option.value 
+                      ? 'border-blue-500 bg-blue-50' 
+                      : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+                    }
+                    ${isResearching ? 'opacity-50 cursor-not-allowed' : ''}
+                  `}
+                >
+                  <input
+                    type="radio"
+                    name="analysis_depth"
+                    value={option.value}
+                    checked={formData.analysis_depth === option.value}
+                    onChange={(e) => handleAnalysisDepthChange(e.target.value as AnalysisDepth)}
+                    disabled={isResearching}
+                    className="mt-1 w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 focus:ring-blue-500 focus:ring-2"
+                  />
+                  <div className="flex-1">
+                    <div className="flex items-center space-x-2">
+                      <span className="font-medium text-gray-900">{option.label}</span>
+                      <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                        {option.agents} agent{option.agents !== 1 ? 's' : ''}
+                      </span>
+                    </div>
+                    <div className="text-sm text-gray-600 mt-1">{option.description}</div>
+                  </div>
+                </label>
+              ))}
+            </div>
+          </div>
+
+          {/* Agent Selection */}
+          <div className="mb-6">
+            <div className="flex items-center justify-between mb-3">
+              <label className="block text-sm font-medium text-gray-700">
+                Selected Agents ({formData.selected_agents.length}/{availableAgents.length})
+              </label>
+              <button
+                type="button"
+                onClick={handleSelectAllAgents}
+                disabled={isResearching}
+                className="text-sm text-blue-600 hover:text-blue-800 font-medium disabled:opacity-50"
+              >
+                {formData.selected_agents.length === availableAgents.length ? 'Deselect All' : 'Select All'}
+              </button>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {availableAgents.map(agent => (
+                <label
+                  key={agent.id}
+                  className={`
+                    flex items-start space-x-3 p-3 rounded-lg border cursor-pointer transition-all duration-200
+                    ${formData.selected_agents.includes(agent.id)
+                      ? 'border-green-500 bg-green-50' 
+                      : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+                    }
+                    ${isResearching ? 'opacity-50 cursor-not-allowed' : ''}
+                  `}
+                >
+                  <input
+                    type="checkbox"
+                    checked={formData.selected_agents.includes(agent.id)}
+                    onChange={() => handleAgentToggle(agent.id)}
+                    disabled={isResearching}
+                    className="mt-1 w-4 h-4 text-green-600 bg-gray-100 border-gray-300 rounded focus:ring-green-500 focus:ring-2"
+                  />
+                  <div className="flex-1">
+                    <div className="flex items-center space-x-2">
+                      <span className="text-lg">{agent.icon}</span>
+                      <span className="font-medium text-gray-900">{agent.name}</span>
+                    </div>
+                    <div className="text-sm text-gray-600 mt-1">{agent.description}</div>
+                  </div>
+                </label>
+              ))}
+            </div>
+          </div>
+
+          {/* Performance Settings */}
+          <div className="mb-6">
+            <label className="flex items-center space-x-3 p-3 rounded-lg border border-gray-200 hover:bg-gray-50 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={formData.enable_parallel_execution}
+                onChange={(e) => handleInputChange('enable_parallel_execution', e.target.checked)}
+                disabled={isResearching}
+                className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 focus:ring-2"
+              />
+              <div className="flex-1">
+                <div className="font-medium text-gray-900">Enable Parallel Execution</div>
+                <div className="text-sm text-gray-600">Run compatible agents in parallel for faster analysis (experimental)</div>
+              </div>
+            </label>
+          </div>
+        </div>
 
         {/* Optional Company Context */}
         <div className="border-t pt-6">
