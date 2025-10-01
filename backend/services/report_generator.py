@@ -148,16 +148,54 @@ class MarketResearchReportGenerator:
         Returns:
             Dict containing synthesized and deduplicated data
         """
-        synthesized = {
-            'consumer_insights': self._deduplicate_consumer_insights(state),
-            'market_trends': self._deduplicate_market_trends(state),
-            'competitor_profiles': self._deduplicate_competitor_data(state),
-            'opportunities': self._deduplicate_opportunities(state),
-            'data_quality': self._assess_data_quality(state),
-            'key_metrics': self._calculate_key_metrics(state)
-        }
-        
-        return synthesized
+        try:
+            synthesized = {
+                'consumer_insights': self._deduplicate_consumer_insights(state),
+                'market_trends': self._deduplicate_market_trends(state),
+                'competitor_profiles': self._deduplicate_competitor_data(state),
+                'opportunities': self._deduplicate_opportunities(state),
+                'data_quality': self._assess_data_quality(state),
+                'key_metrics': self._calculate_key_metrics(state)
+            }
+            
+            return synthesized
+            
+        except Exception as e:
+            logger.error(f"Error synthesizing insights: {e}")
+            
+            # Return synthesized data with error handling
+            return {
+                'consumer_insights': self._safe_deduplicate_consumer_insights(state),
+                'market_trends': self._safe_deduplicate_market_trends(state),
+                'competitor_profiles': self._handle_competitor_analysis_error(state, e),
+                'opportunities': self._safe_deduplicate_opportunities(state),
+                'data_quality': self._assess_data_quality(state),
+                'key_metrics': self._calculate_key_metrics(state)
+            }
+    
+    def _safe_deduplicate_consumer_insights(self, state: MarketResearchState) -> List[Dict[str, Any]]:
+        """Safely deduplicate consumer insights with error handling"""
+        try:
+            return self._deduplicate_consumer_insights(state)
+        except Exception as e:
+            logger.error(f"Error deduplicating consumer insights: {e}")
+            return []
+    
+    def _safe_deduplicate_market_trends(self, state: MarketResearchState) -> List[Dict[str, Any]]:
+        """Safely deduplicate market trends with error handling"""
+        try:
+            return self._deduplicate_market_trends(state)
+        except Exception as e:
+            logger.error(f"Error deduplicating market trends: {e}")
+            return []
+    
+    def _safe_deduplicate_opportunities(self, state: MarketResearchState) -> List[Dict[str, Any]]:
+        """Safely deduplicate opportunities with error handling"""
+        try:
+            return self._deduplicate_opportunities(state)
+        except Exception as e:
+            logger.error(f"Error deduplicating opportunities: {e}")
+            return []
     
     def _deduplicate_consumer_insights(self, state: MarketResearchState) -> List[Dict[str, Any]]:
         """Remove duplicate consumer insights based on content similarity"""
@@ -221,19 +259,89 @@ class MarketResearchReportGenerator:
         
         return deduplicated[:8]  # Limit to top 8 trends
     
-    def _deduplicate_competitor_data(self, state: MarketResearchState) -> List[Dict[str, Any]]:
+    def _deduplicate_competitor_data(self, state: MarketResearchState) -> Dict[str, Any]:
         """Process and deduplicate competitor analysis data"""
         competitor_landscape = state.get('competitor_landscape', {})
+        competitive_positioning = state.get('competitive_positioning', {})
+        feature_comparisons = state.get('feature_comparisons', [])
         
-        if not competitor_landscape or competitor_landscape.get('status') == 'failed':
-            return []
+        # Handle pending status (for backward compatibility with tests)
+        if competitor_landscape.get('status') == 'pending':
+            return {
+                'status': 'pending',
+                'competitors': [],
+                'key_players': [],
+                'market_share_data': {},
+                'positioning_strategies': {},
+                'feature_comparisons': [],
+                'message': 'Competitive landscape analysis is pending completion of the competitor analysis agent (Task 4).'
+            }
         
-        # For now, return placeholder structure since competitor agent isn't implemented
-        return [{
-            'name': 'Competitor Analysis Pending',
-            'status': 'Awaiting competitor analysis agent implementation',
-            'note': 'Detailed competitor profiles will be available once task 4 is completed'
-        }]
+        if not competitor_landscape or competitor_landscape.get('status') in ['failed', 'no_data_available']:
+            return {
+                'status': 'failed',
+                'competitors': [],
+                'key_players': [],
+                'market_share_data': {},
+                'positioning_strategies': {},
+                'feature_comparisons': [],
+                'error_message': 'Competitor analysis data unavailable'
+            }
+        
+        # Process competitor landscape data
+        competitors = competitor_landscape.get('competitors', [])
+        key_players = competitor_landscape.get('key_players', [])
+        market_share_data = competitor_landscape.get('market_share_data', {})
+        
+        # Deduplicate competitors
+        unique_competitors = []
+        seen_competitors = set()
+        
+        for competitor in competitors:
+            competitor_name = competitor.lower().strip() if isinstance(competitor, str) else str(competitor).lower().strip()
+            normalized_name = re.sub(r'[^\w\s]', '', competitor_name)
+            normalized_name = ' '.join(normalized_name.split())
+            
+            if normalized_name and len(normalized_name) > 2 and normalized_name not in seen_competitors:
+                seen_competitors.add(normalized_name)
+                unique_competitors.append(competitor)
+        
+        # Deduplicate key players
+        unique_key_players = []
+        seen_key_players = set()
+        
+        for player in key_players:
+            player_name = player.lower().strip() if isinstance(player, str) else str(player).lower().strip()
+            normalized_name = re.sub(r'[^\w\s]', '', player_name)
+            normalized_name = ' '.join(normalized_name.split())
+            
+            if normalized_name and len(normalized_name) > 2 and normalized_name not in seen_key_players:
+                seen_key_players.add(normalized_name)
+                unique_key_players.append(player)
+        
+        # Process positioning strategies
+        positioning_strategies = competitive_positioning.get('positioning_strategies', {})
+        
+        # Process feature comparisons
+        deduplicated_features = []
+        seen_feature_competitors = set()
+        
+        for comparison in feature_comparisons:
+            competitor_name = comparison.get('competitor', '').lower().strip()
+            if competitor_name and competitor_name not in seen_feature_competitors:
+                seen_feature_competitors.add(competitor_name)
+                deduplicated_features.append(comparison)
+        
+        return {
+            'status': 'success',
+            'competitors': unique_competitors[:10],  # Limit to top 10
+            'key_players': unique_key_players[:5],   # Limit to top 5
+            'market_share_data': market_share_data,
+            'positioning_strategies': positioning_strategies,
+            'feature_comparisons': deduplicated_features[:5],  # Limit to top 5
+            'total_competitors_found': len(unique_competitors),
+            'data_sources': competitor_landscape.get('data_sources', 0)
+        }
     
     def _deduplicate_opportunities(self, state: MarketResearchState) -> List[Dict[str, Any]]:
         """Remove duplicate opportunities and white spaces"""
@@ -293,8 +401,16 @@ class MarketResearchReportGenerator:
         
         # Assess competitor data quality
         competitor_landscape = state.get('competitor_landscape', {})
-        if competitor_landscape and competitor_landscape.get('status') != 'failed':
-            quality_metrics['competitor_data_quality'] = 'pending'
+        if competitor_landscape and competitor_landscape.get('status') not in ['failed', 'no_data_available']:
+            competitors_count = len(competitor_landscape.get('competitors', []))
+            key_players_count = len(competitor_landscape.get('key_players', []))
+            
+            if competitors_count >= 5 and key_players_count >= 2:
+                quality_metrics['competitor_data_quality'] = 'high'
+            elif competitors_count >= 2 or key_players_count >= 1:
+                quality_metrics['competitor_data_quality'] = 'medium'
+            else:
+                quality_metrics['competitor_data_quality'] = 'low'
         else:
             quality_metrics['competitor_data_quality'] = 'unavailable'
         
@@ -337,6 +453,37 @@ class MarketResearchReportGenerator:
             return 'not available'
         else:
             return quality
+    
+    def _handle_competitor_analysis_error(self, state: MarketResearchState, error: Exception) -> Dict[str, Any]:
+        """Handle competitor analysis errors gracefully"""
+        logger.error(f"Competitor analysis error: {error}")
+        
+        return {
+            'status': 'failed',
+            'competitors': [],
+            'key_players': [],
+            'market_share_data': {},
+            'positioning_strategies': {},
+            'feature_comparisons': [],
+            'error_message': f'Competitor analysis failed: {str(error)}',
+            'fallback_data': self._get_fallback_competitor_data(state)
+        }
+    
+    def _get_fallback_competitor_data(self, state: MarketResearchState) -> Dict[str, Any]:
+        """Get fallback competitor data from other sources if available"""
+        fallback_data = {}
+        
+        # Try to get competitor data from SWOT analysis results
+        swot_analyses = state.get('swot_analyses', {})
+        if swot_analyses:
+            fallback_data['swot_competitors'] = list(swot_analyses.keys())
+        
+        # Try to get competitor data from competitor analysis content
+        competitor_analysis_structured = state.get('competitor_analysis_structured', {})
+        if competitor_analysis_structured:
+            fallback_data['structured_competitors'] = competitor_analysis_structured.get('competitors', [])
+        
+        return fallback_data
     
     def _generate_header_section(self, state: MarketResearchState, report_id: str) -> str:
         """Generate the report header section"""
@@ -518,37 +665,130 @@ class MarketResearchReportGenerator:
         """Generate the competitive landscape section"""
         competitor_content = []
         
-        competitors = synthesized_data['competitor_profiles']
-        if competitors:
-            for competitor in competitors:
-                if competitor.get('status') == 'Awaiting competitor analysis agent implementation':
-                    competitor_content.append("### Competitive Analysis Status")
-                    competitor_content.append("Competitive landscape analysis is pending completion of the competitor analysis agent (Task 4).")
-                    competitor_content.append("")
-                    competitor_content.append("**Planned Analysis Includes:**")
-                    competitor_content.append("- Competitor landscape mapping")
-                    competitor_content.append("- Competitive positioning analysis")
-                    competitor_content.append("- Feature comparison matrices")
-                    competitor_content.append("- White space opportunity identification")
-                    break
+        competitor_data = synthesized_data['competitor_profiles']
         
-        # Market gaps subsection
+        # Handle failed, pending, or unavailable competitor analysis
+        if competitor_data.get('status') == 'pending':
+            competitor_content.append("### Competitive Analysis Status")
+            competitor_content.append("Competitive landscape analysis is pending completion of the competitor analysis agent (Task 4).")
+            competitor_content.append("")
+            competitor_content.append("**Planned Analysis Includes:**")
+            competitor_content.append("- Competitor landscape mapping")
+            competitor_content.append("- Competitive positioning analysis")
+            competitor_content.append("- Feature comparison matrices")
+            competitor_content.append("- White space opportunity identification")
+            competitor_content.append("")
+        elif competitor_data.get('status') == 'failed':
+            competitor_content.append("### Competitive Analysis Status")
+            error_message = competitor_data.get('error_message', 'Competitor analysis data unavailable')
+            competitor_content.append(f"Competitive landscape analysis encountered an issue: {error_message}")
+            competitor_content.append("")
+            competitor_content.append("**Note:** Market gap analysis and other insights may still be available below.")
+            competitor_content.append("")
+        elif competitor_data.get('status') == 'success':
+            # Generate competitor landscape subsection
+            competitors = competitor_data.get('competitors', [])
+            key_players = competitor_data.get('key_players', [])
+            
+            if competitors:
+                competitor_content.append("### Competitor Landscape")
+                competitor_content.append(f"**Total Competitors Identified:** {competitor_data.get('total_competitors_found', len(competitors))}")
+                competitor_content.append("")
+                
+                # List key competitors
+                competitor_content.append("**Key Competitors:**")
+                for i, competitor in enumerate(competitors[:8], 1):
+                    competitor_content.append(f"{i}. {competitor}")
+                competitor_content.append("")
+                
+                # List market leaders if available
+                if key_players:
+                    competitor_content.append("**Market Leaders:**")
+                    for i, player in enumerate(key_players[:5], 1):
+                        competitor_content.append(f"{i}. {player}")
+                    competitor_content.append("")
+            
+            # Market share data subsection
+            market_share_data = competitor_data.get('market_share_data', {})
+            if market_share_data:
+                competitor_content.append("### Market Share Analysis")
+                for company, share in list(market_share_data.items())[:5]:
+                    competitor_content.append(f"**{company}:** {share}")
+                competitor_content.append("")
+            
+            # Competitive positioning subsection
+            positioning_strategies = competitor_data.get('positioning_strategies', {})
+            if positioning_strategies:
+                competitor_content.append("### Competitive Positioning Analysis")
+                for competitor, strategy in list(positioning_strategies.items())[:5]:
+                    competitor_content.append(f"#### {competitor}")
+                    
+                    market_position = strategy.get('market_position', 'Unknown')
+                    competitor_content.append(f"**Market Position:** {market_position.title()}")
+                    
+                    differentiators = strategy.get('key_differentiators', [])
+                    if differentiators:
+                        competitor_content.append(f"**Key Differentiators:** {', '.join(differentiators)}")
+                    
+                    target_segments = strategy.get('target_segments', [])
+                    if target_segments:
+                        competitor_content.append(f"**Target Segments:** {', '.join(target_segments)}")
+                    
+                    competitor_content.append("")
+            
+            # Feature comparison subsection
+            feature_comparisons = competitor_data.get('feature_comparisons', [])
+            if feature_comparisons:
+                competitor_content.append("### Feature Comparison Analysis")
+                for comparison in feature_comparisons[:3]:
+                    competitor_name = comparison.get('competitor', 'Unknown Competitor')
+                    overall_rating = comparison.get('overall_rating', 'medium')
+                    
+                    competitor_content.append(f"#### {competitor_name}")
+                    competitor_content.append(f"**Overall Rating:** {overall_rating.title()}")
+                    
+                    strengths = comparison.get('strengths', [])
+                    if strengths:
+                        competitor_content.append(f"**Strengths:** {', '.join(strengths)}")
+                    
+                    weaknesses = comparison.get('weaknesses', [])
+                    if weaknesses:
+                        competitor_content.append(f"**Weaknesses:** {', '.join(weaknesses)}")
+                    
+                    competitor_content.append("")
+        
+        # Market gaps subsection (always include if available)
         market_gaps = state.get('market_gaps', [])
         if market_gaps:
             competitor_content.append("### Identified Market Gaps")
-            for i, gap in enumerate(market_gaps[:3], 1):
+            for i, gap in enumerate(market_gaps[:5], 1):
                 competitor_content.append(f"{i}. {gap}")
             competitor_content.append("")
         
-        # Competitive positioning subsection
+        # Competitive positioning from state (fallback)
         competitive_positioning = state.get('competitive_positioning', {})
-        if competitive_positioning and competitive_positioning.get('status') != 'failed':
-            competitor_content.append("### Competitive Positioning")
-            competitor_content.append("Competitive positioning analysis available - detailed positioning maps completed.")
+        if competitive_positioning and competitive_positioning.get('status') not in ['failed', 'no_data_available'] and not competitor_data.get('positioning_strategies'):
+            competitor_content.append("### Additional Competitive Insights")
+            competitor_content.append("Additional competitive positioning analysis completed.")
+            
+            # Include positioning map data if available
+            positioning_map = competitive_positioning.get('market_positioning_map', {})
+            if positioning_map.get('market_segments'):
+                segments = positioning_map['market_segments']
+                competitor_content.append(f"**Market Segments Identified:** {', '.join(segments)}")
+            
             competitor_content.append("")
         
+        # Data quality and source attribution
+        if competitor_data.get('status') == 'success':
+            data_sources = competitor_data.get('data_sources', 0)
+            if data_sources > 0:
+                competitor_content.append(f"*Analysis based on {data_sources} data sources*")
+                competitor_content.append("")
+        
+        # Fallback content if no data available
         if not competitor_content:
-            competitor_content = ["Competitive landscape analysis is pending implementation.", ""]
+            competitor_content = ["Competitive landscape analysis data is currently unavailable.", ""]
         
         return self.section_templates['competitor_analysis'].format(
             competitor_content="\n".join(competitor_content)
