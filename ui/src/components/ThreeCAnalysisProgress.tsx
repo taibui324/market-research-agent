@@ -22,6 +22,8 @@ interface ThreeCAnalysisProgressProps {
   selectedAgents?: string[];
   analysisDepth?: string;
   agentPerformance?: Record<string, string>;
+  onRetryAgent?: (agentId: string) => void;
+  onSkipAgent?: (agentId: string) => void;
 }
 
 const ThreeCAnalysisProgress: React.FC<ThreeCAnalysisProgressProps> = ({
@@ -36,7 +38,8 @@ const ThreeCAnalysisProgress: React.FC<ThreeCAnalysisProgressProps> = ({
   onRetryConnection,
   selectedAgents = [],
   analysisDepth = 'comprehensive',
-  agentPerformance = {}
+  onRetryAgent,
+  onSkipAgent
 }) => {
   const [currentTime, setCurrentTime] = useState(new Date());
 
@@ -360,17 +363,27 @@ const ThreeCAnalysisProgress: React.FC<ThreeCAnalysisProgressProps> = ({
               <span className="mr-2">🤖</span>
               Agent Performance
             </h4>
-            <span className="bg-gray-100 text-gray-700 px-2 py-1 rounded-full text-xs font-medium">
-              {analysisDepth} mode
-            </span>
+            <div className="flex items-center space-x-2">
+              <span className="bg-gray-100 text-gray-700 px-2 py-1 rounded-full text-xs font-medium">
+                {analysisDepth} mode
+              </span>
+              <span className="bg-blue-100 text-blue-700 px-2 py-1 rounded-full text-xs font-medium">
+                {selectedAgents.length} agents
+              </span>
+            </div>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-4">
             {selectedAgents.map(agentId => {
               const agentPhase = allAgentPhases[agentId as keyof typeof allAgentPhases];
-              const performance = agentPerformance[agentId] || 'pending';
-              const isActive = currentPhase === agentId;
-              const isCompleted = performance === 'completed';
-              const isFailed = performance === 'failed';
+              const performance = analysisState.agentPerformance?.[agentId];
+              const agentErrors = analysisState.agentErrors?.filter(error => error.agentId === agentId) || [];
+              const hasErrors = agentErrors.length > 0;
+              const latestError = agentErrors[agentErrors.length - 1];
+              
+              const isActive = currentPhase === agentId || performance?.status === 'running';
+              const isCompleted = performance?.status === 'completed';
+              const isFailed = performance?.status === 'failed';
+              const isRetrying = performance?.status === 'retrying';
               
               if (!agentPhase) return null;
               
@@ -378,68 +391,163 @@ const ThreeCAnalysisProgress: React.FC<ThreeCAnalysisProgressProps> = ({
                 <div
                   key={agentId}
                   className={`
-                    p-3 rounded-lg border transition-all duration-200
-                    ${isActive ? 'border-blue-500 bg-blue-50' : 
-                      isCompleted ? 'border-green-500 bg-green-50' :
-                      isFailed ? 'border-red-500 bg-red-50' :
+                    p-4 rounded-lg border transition-all duration-200
+                    ${isActive ? 'border-blue-500 bg-blue-50 shadow-sm' : 
+                      isCompleted ? 'border-green-500 bg-green-50 shadow-sm' :
+                      isFailed ? 'border-red-500 bg-red-50 shadow-sm' :
+                      isRetrying ? 'border-yellow-500 bg-yellow-50 shadow-sm' :
                       'border-gray-200 bg-gray-50'
                     }
                   `}
                 >
-                  <div className="flex items-center space-x-3">
-                    <div className={`
-                      w-8 h-8 rounded-full flex items-center justify-center text-sm
-                      ${isActive ? 'bg-blue-500 text-white animate-pulse' :
-                        isCompleted ? 'bg-green-500 text-white' :
-                        isFailed ? 'bg-red-500 text-white' :
-                        'bg-gray-300 text-gray-600'
-                      }
-                    `}>
-                      {isCompleted ? '✓' : isFailed ? '✗' : agentPhase.icon}
-                    </div>
-                    <div className="flex-1">
-                      <div className="font-medium text-gray-900 text-sm">
-                        {agentPhase.label}
-                      </div>
-                      <div className="text-xs text-gray-600 mt-1">
-                        {isActive ? 'In Progress...' :
-                         isCompleted ? 'Completed' :
-                         isFailed ? 'Failed' :
-                         'Pending'
+                  <div className="flex items-start justify-between mb-3">
+                    <div className="flex items-center space-x-3">
+                      <div className={`
+                        w-10 h-10 rounded-full flex items-center justify-center text-sm font-medium relative
+                        ${isActive ? 'bg-blue-500 text-white' :
+                          isCompleted ? 'bg-green-500 text-white' :
+                          isFailed ? 'bg-red-500 text-white' :
+                          isRetrying ? 'bg-yellow-500 text-white animate-pulse' :
+                          'bg-gray-300 text-gray-600'
                         }
+                      `}>
+                        {isCompleted ? '✓' : 
+                         isFailed ? '✗' : 
+                         isRetrying ? '↻' :
+                         isActive ? '⏳' : 
+                         agentPhase.icon}
+                        
+                        {/* Retry indicator */}
+                        {isRetrying && (
+                          <div className="absolute -top-1 -right-1 w-3 h-3 bg-orange-500 rounded-full flex items-center justify-center">
+                            <span className="text-xs text-white font-bold">{performance?.retryCount || 0}</span>
+                          </div>
+                        )}
+                      </div>
+                      <div className="flex-1">
+                        <div className="font-medium text-gray-900 text-sm flex items-center space-x-2">
+                          <span>{agentPhase.label}</span>
+                          {hasErrors && (
+                            <span className="bg-red-100 text-red-700 px-2 py-1 rounded text-xs font-medium">
+                              {agentErrors.length} issue{agentErrors.length !== 1 ? 's' : ''}
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-xs text-gray-600 mt-1 flex items-center space-x-3">
+                          <span>
+                            {isActive ? 'In Progress...' :
+                             isCompleted ? 'Completed' :
+                             isFailed ? 'Failed' :
+                             isRetrying ? 'Retrying...' :
+                             'Pending'
+                            }
+                          </span>
+                          {performance?.duration && (
+                            <span>• {(performance.duration / 1000).toFixed(1)}s</span>
+                          )}
+                          {performance?.dataPointsCollected && (
+                            <span>• {performance.dataPointsCollected} data points</span>
+                          )}
+                          {performance?.qualityScore && (
+                            <span>• Quality: {Math.round(performance.qualityScore * 100)}%</span>
+                          )}
+                        </div>
                       </div>
                     </div>
-                    {isActive && (
-                      <div className="w-4 h-4">
-                        <div className="animate-spin rounded-full h-4 w-4 border-2 border-blue-500 border-t-transparent"></div>
+                    
+                    {/* Agent Actions */}
+                    {(isFailed || hasErrors) && (onRetryAgent || onSkipAgent) && (
+                      <div className="flex items-center space-x-2">
+                        {onRetryAgent && latestError?.retryable && (
+                          <button
+                            onClick={() => onRetryAgent(agentId)}
+                            className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded hover:bg-blue-200 transition-colors"
+                            title="Retry this agent"
+                          >
+                            Retry
+                          </button>
+                        )}
+                        {onSkipAgent && (
+                          <button
+                            onClick={() => onSkipAgent(agentId)}
+                            className="text-xs bg-gray-100 text-gray-700 px-2 py-1 rounded hover:bg-gray-200 transition-colors"
+                            title="Skip this agent and continue"
+                          >
+                            Skip
+                          </button>
+                        )}
                       </div>
                     )}
                   </div>
                   
                   {/* Agent Progress Bar */}
-                  {(isActive || isCompleted) && (
-                    <div className="mt-2">
-                      <div className={`
-                        w-full rounded-full h-2
-                        ${isActive ? 'bg-blue-200' :
-                          isCompleted ? 'bg-green-200' :
-                          'bg-gray-200'
-                        }
-                      `}>
-                        <div
-                          className={`
-                            h-2 rounded-full transition-all duration-300
-                            ${isActive ? 'bg-blue-500' :
-                              isCompleted ? 'bg-green-500' :
-                              'bg-gray-400'
-                            }
-                          `}
-                          style={{ 
-                            width: isCompleted ? '100%' : 
-                                   isActive ? `${getPhaseProgress(agentId as ThreeCProgressPhase)}%` : '0%' 
-                          }}
-                        />
+                  <div className="mb-3">
+                    <div className="flex justify-between text-xs text-gray-600 mb-1">
+                      <span>Progress</span>
+                      <span>{Math.round(performance?.progress || 0)}%</span>
+                    </div>
+                    <div className={`
+                      w-full rounded-full h-2
+                      ${isActive ? 'bg-blue-200' :
+                        isCompleted ? 'bg-green-200' :
+                        isFailed ? 'bg-red-200' :
+                        isRetrying ? 'bg-yellow-200' :
+                        'bg-gray-200'
+                      }
+                    `}>
+                      <div
+                        className={`
+                          h-2 rounded-full transition-all duration-300
+                          ${isActive ? 'bg-blue-500' :
+                            isCompleted ? 'bg-green-500' :
+                            isFailed ? 'bg-red-500' :
+                            isRetrying ? 'bg-yellow-500' :
+                            'bg-gray-400'
+                          }
+                        `}
+                        style={{ 
+                          width: `${Math.max(0, Math.min(100, performance?.progress || 0))}%`
+                        }}
+                      />
+                    </div>
+                  </div>
+                  
+                  {/* Agent Errors */}
+                  {hasErrors && (
+                    <div className="bg-red-50 border border-red-200 rounded p-2">
+                      <div className="text-xs font-medium text-red-800 mb-1">
+                        Latest Issue:
                       </div>
+                      <div className="text-xs text-red-700">
+                        {latestError?.message}
+                      </div>
+                      {agentErrors.length > 1 && (
+                        <div className="text-xs text-red-600 mt-1">
+                          +{agentErrors.length - 1} more issue{agentErrors.length - 1 !== 1 ? 's' : ''}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  
+                  {/* Performance Metrics */}
+                  {(isCompleted || isActive) && performance && (
+                    <div className="grid grid-cols-2 gap-2 text-xs">
+                      {performance.startTime && (
+                        <div className="bg-white/50 rounded p-2">
+                          <div className="font-medium text-gray-700">Started</div>
+                          <div className="text-gray-600">
+                            {performance.startTime.toLocaleTimeString()}
+                          </div>
+                        </div>
+                      )}
+                      {performance.endTime && (
+                        <div className="bg-white/50 rounded p-2">
+                          <div className="font-medium text-gray-700">Completed</div>
+                          <div className="text-gray-600">
+                            {performance.endTime.toLocaleTimeString()}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>

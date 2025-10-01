@@ -17,11 +17,34 @@ const mockAnalysisState: ThreeCAnalysisState = {
   progress: 100,
   analysisType: '3c_analysis',
   targetMarket: "japanese_curry",
+  selectedAgents: ['consumer_analysis', 'trend_analysis', 'competitor_analysis', 'opportunity_analysis'],
+  agentPerformance: {
+    consumer_analysis: {
+      status: 'completed',
+      progress: 100,
+      duration: 5000,
+      dataPointsCollected: 25,
+      qualityScore: 0.85,
+      errorCount: 0,
+      retryCount: 0
+    },
+    trend_analysis: {
+      status: 'completed',
+      progress: 100,
+      duration: 4500,
+      dataPointsCollected: 18,
+      qualityScore: 0.9,
+      errorCount: 0,
+      retryCount: 0
+    }
+  },
+  agentErrors: [],
   consumerInsights: [
     {
       insight: "Consumers prefer spicy curry",
       confidence: 0.85,
-      source: "Social Media Analysis"
+      source: "Social Media Analysis",
+      agentId: "consumer_analysis"
     }
   ],
   painPoints: ["Too expensive", "Limited availability"],
@@ -36,7 +59,8 @@ const mockAnalysisState: ThreeCAnalysisState = {
     {
       trend: "Growing demand for authentic Japanese curry",
       confidence: 0.9,
-      source: "Market Research"
+      source: "Market Research",
+      agentId: "trend_analysis"
     }
   ],
   trendPredictions: [
@@ -145,7 +169,7 @@ describe('ResultsDashboard', () => {
     // Click on Competitive Landscape tab
     fireEvent.click(screen.getByText('Competitive Landscape'));
     
-    expect(screen.getByText('Coming Soon')).toBeInTheDocument();
+    expect(screen.getByText('Competitive landscape analysis will appear here once the analysis is complete.')).toBeInTheDocument();
   });
 
   it('displays opportunities when tab is selected', () => {

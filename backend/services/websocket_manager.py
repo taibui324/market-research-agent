@@ -1,7 +1,7 @@
 import json
 import logging
 from datetime import datetime
-from typing import Dict, Set
+from typing import Dict, Set, List
 
 from fastapi import WebSocket
 
@@ -72,4 +72,52 @@ class WebSocketManager:
             }
         }
         #logger.info(f"Status: {status}, Message: {message}")
+        await self.broadcast_to_job(job_id, update)
+    
+    async def send_agent_progress_update(self, job_id: str, agent_name: str, agent_status: str, 
+                                       progress_percentage: float = None, message: str = None, 
+                                       performance_metrics: dict = None, error: str = None):
+        """Send agent-specific progress updates with performance metrics."""
+        update = {
+            "type": "agent_progress",
+            "data": {
+                "agent_name": agent_name,
+                "agent_status": agent_status,  # starting, processing, completed, failed
+                "progress_percentage": progress_percentage,
+                "message": message,
+                "performance_metrics": performance_metrics or {},
+                "error": error,
+                "timestamp": datetime.now().isoformat()
+            }
+        }
+        await self.broadcast_to_job(job_id, update)
+    
+    async def send_workflow_progress_update(self, job_id: str, workflow_stage: str, 
+                                          overall_progress: float, active_agents: List[str],
+                                          completed_agents: List[str], failed_agents: List[str] = None,
+                                          estimated_completion_time: str = None):
+        """Send comprehensive workflow progress updates."""
+        update = {
+            "type": "workflow_progress",
+            "data": {
+                "workflow_stage": workflow_stage,
+                "overall_progress": overall_progress,
+                "active_agents": active_agents,
+                "completed_agents": completed_agents,
+                "failed_agents": failed_agents or [],
+                "estimated_completion_time": estimated_completion_time,
+                "timestamp": datetime.now().isoformat()
+            }
+        }
+        await self.broadcast_to_job(job_id, update)
+    
+    async def send_performance_metrics_update(self, job_id: str, metrics: dict):
+        """Send performance metrics update."""
+        update = {
+            "type": "performance_metrics",
+            "data": {
+                "metrics": metrics,
+                "timestamp": datetime.now().isoformat()
+            }
+        }
         await self.broadcast_to_job(job_id, update)

@@ -63,11 +63,51 @@ const MarketAnalysisForm: React.FC<MarketAnalysisFormProps> = ({
   ];
 
   const availableAgents = [
-    { id: 'consumer_analysis', name: 'Consumer Analysis', description: 'Analyze consumer behavior, pain points, and personas', icon: '👥' },
-    { id: 'trend_analysis', name: 'Trend Analysis', description: 'Identify market trends and future predictions', icon: '📈' },
-    { id: 'competitor_analysis', name: 'Competitor Analysis', description: 'Analyze competitive landscape and positioning', icon: '🏢' },
-    { id: 'swot_analysis', name: 'SWOT Analysis', description: 'Comprehensive strengths, weaknesses, opportunities, threats', icon: '⚖️' },
-    { id: 'customer_mapping', name: 'Customer Mapping', description: 'Map customer journey and detailed persona development', icon: '🗺️' }
+    { 
+      id: 'consumer_analysis', 
+      name: 'Consumer Analysis', 
+      description: 'Analyze consumer behavior, pain points, and personas', 
+      icon: '👥',
+      estimatedTime: '3-5 min',
+      dataTypes: ['Social Media', 'Reviews', 'Forums'],
+      capabilities: ['Pain Point Identification', 'Persona Generation', 'Behavior Analysis']
+    },
+    { 
+      id: 'trend_analysis', 
+      name: 'Trend Analysis', 
+      description: 'Identify market trends and future predictions', 
+      icon: '📈',
+      estimatedTime: '4-6 min',
+      dataTypes: ['Industry Reports', 'Market Data', 'News'],
+      capabilities: ['Trend Identification', 'Future Predictions', 'Adoption Curves']
+    },
+    { 
+      id: 'competitor_analysis', 
+      name: 'Competitor Analysis', 
+      description: 'Analyze competitive landscape and positioning', 
+      icon: '🏢',
+      estimatedTime: '5-7 min',
+      dataTypes: ['Company Data', 'Product Info', 'Market Position'],
+      capabilities: ['Competitive Mapping', 'Feature Comparison', 'Gap Analysis']
+    },
+    { 
+      id: 'swot_analysis', 
+      name: 'SWOT Analysis', 
+      description: 'Comprehensive strengths, weaknesses, opportunities, threats', 
+      icon: '⚖️',
+      estimatedTime: '3-4 min',
+      dataTypes: ['Market Data', 'Competitive Intel', 'Industry Analysis'],
+      capabilities: ['Strategic Analysis', 'Risk Assessment', 'Opportunity Mapping']
+    },
+    { 
+      id: 'customer_mapping', 
+      name: 'Customer Mapping', 
+      description: 'Map customer journey and detailed persona development', 
+      icon: '🗺️',
+      estimatedTime: '4-5 min',
+      dataTypes: ['Customer Data', 'Journey Analytics', 'Touchpoints'],
+      capabilities: ['Journey Mapping', 'Segment Analysis', 'Touchpoint Optimization']
+    }
   ];
 
   const getDefaultAgentsForDepth = (depth: AnalysisDepth): string[] => {
@@ -184,6 +224,26 @@ const MarketAnalysisForm: React.FC<MarketAnalysisFormProps> = ({
       ...prev,
       selected_agents: prev.selected_agents.length === availableAgents.length ? [] : allAgentIds
     }));
+  };
+
+  const calculateEstimatedTime = () => {
+    const selectedAgentTimes = formData.selected_agents.map(agentId => {
+      const agent = availableAgents.find(a => a.id === agentId);
+      if (!agent) return 0;
+      // Extract average time from "3-5 min" format
+      const timeRange = agent.estimatedTime.match(/(\d+)-(\d+)/);
+      if (timeRange) {
+        return (parseInt(timeRange[1]) + parseInt(timeRange[2])) / 2;
+      }
+      return 4; // default
+    });
+    
+    const baseTime = 2; // Base orchestration time
+    const agentTime = formData.enable_parallel_execution 
+      ? Math.max(...selectedAgentTimes, 0) // Parallel execution - use longest agent time
+      : selectedAgentTimes.reduce((sum, time) => sum + time, 0); // Sequential - sum all times
+    
+    return Math.round(baseTime + agentTime);
   };
 
   // Initialize selected agents based on analysis depth
@@ -331,23 +391,28 @@ const MarketAnalysisForm: React.FC<MarketAnalysisFormProps> = ({
               <label className="block text-sm font-medium text-gray-700">
                 Selected Agents ({formData.selected_agents.length}/{availableAgents.length})
               </label>
-              <button
-                type="button"
-                onClick={handleSelectAllAgents}
-                disabled={isResearching}
-                className="text-sm text-blue-600 hover:text-blue-800 font-medium disabled:opacity-50"
-              >
-                {formData.selected_agents.length === availableAgents.length ? 'Deselect All' : 'Select All'}
-              </button>
+              <div className="flex items-center space-x-3">
+                <span className="text-xs text-gray-500">
+                  Est. time: {calculateEstimatedTime()} min
+                </span>
+                <button
+                  type="button"
+                  onClick={handleSelectAllAgents}
+                  disabled={isResearching}
+                  className="text-sm text-blue-600 hover:text-blue-800 font-medium disabled:opacity-50"
+                >
+                  {formData.selected_agents.length === availableAgents.length ? 'Deselect All' : 'Select All'}
+                </button>
+              </div>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-4">
               {availableAgents.map(agent => (
                 <label
                   key={agent.id}
                   className={`
-                    flex items-start space-x-3 p-3 rounded-lg border cursor-pointer transition-all duration-200
+                    flex items-start space-x-4 p-4 rounded-lg border cursor-pointer transition-all duration-200
                     ${formData.selected_agents.includes(agent.id)
-                      ? 'border-green-500 bg-green-50' 
+                      ? 'border-green-500 bg-green-50 shadow-sm' 
                       : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
                     }
                     ${isResearching ? 'opacity-50 cursor-not-allowed' : ''}
@@ -361,11 +426,47 @@ const MarketAnalysisForm: React.FC<MarketAnalysisFormProps> = ({
                     className="mt-1 w-4 h-4 text-green-600 bg-gray-100 border-gray-300 rounded focus:ring-green-500 focus:ring-2"
                   />
                   <div className="flex-1">
-                    <div className="flex items-center space-x-2">
-                      <span className="text-lg">{agent.icon}</span>
-                      <span className="font-medium text-gray-900">{agent.name}</span>
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center space-x-2">
+                        <span className="text-xl">{agent.icon}</span>
+                        <span className="font-medium text-gray-900">{agent.name}</span>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <span className="bg-blue-100 text-blue-700 px-2 py-1 rounded text-xs font-medium">
+                          {agent.estimatedTime}
+                        </span>
+                        {formData.selected_agents.includes(agent.id) && (
+                          <span className="bg-green-100 text-green-700 px-2 py-1 rounded text-xs font-medium">
+                            Selected
+                          </span>
+                        )}
+                      </div>
                     </div>
-                    <div className="text-sm text-gray-600 mt-1">{agent.description}</div>
+                    <div className="text-sm text-gray-600 mb-3">{agent.description}</div>
+                    
+                    {/* Agent Capabilities */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+                      <div>
+                        <span className="font-medium text-gray-700">Data Sources:</span>
+                        <div className="flex flex-wrap gap-1 mt-1">
+                          {agent.dataTypes.map((dataType, index) => (
+                            <span key={index} className="bg-gray-100 text-gray-600 px-2 py-1 rounded">
+                              {dataType}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                      <div>
+                        <span className="font-medium text-gray-700">Capabilities:</span>
+                        <div className="flex flex-wrap gap-1 mt-1">
+                          {agent.capabilities.map((capability, index) => (
+                            <span key={index} className="bg-blue-100 text-blue-600 px-2 py-1 rounded">
+                              {capability}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 </label>
               ))}
