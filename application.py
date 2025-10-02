@@ -599,6 +599,20 @@ async def process_enhanced_3c_analysis(job_id: str, data: MarketResearchRequest)
                 # Send performance metrics update
                 await manager.send_performance_metrics_update(job_id, performance_metrics)
         
+        # Ensure we have the final state by running the workflow to completion
+        if not final_state.get('report'):
+            logger.warning("Report not found in final state, attempting to generate report directly")
+            try:
+                # Import the report generator and generate report directly from final state
+                from backend.services.report_generator import MarketResearchReportGenerator
+                report_generator = MarketResearchReportGenerator()
+                report_content = await report_generator.generate_3c_report(final_state)
+                final_state['report'] = report_content
+                logger.info(f"Successfully generated report directly ({len(report_content)} characters)")
+            except Exception as e:
+                logger.error(f"Failed to generate report directly: {e}")
+                final_state['report_generation_error'] = str(e)
+        
         # Calculate final performance metrics
         workflow_end_time = datetime.now()
         workflow_start_time = datetime.fromisoformat(performance_metrics["workflow_start_time"])
