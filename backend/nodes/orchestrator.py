@@ -157,6 +157,9 @@ class ThreeCAnalysisOrchestrator:
         if "customer_mapping" in self.selected_agents:
             self.workflow.add_node("customer_mapping", self._run_customer_mapping)
         
+        # Add parallel analysis coordinator for better performance
+        self.workflow.add_node("parallel_analysis_coordinator", self._run_parallel_analysis)
+        
         # Always include synthesis and reporting
         self.workflow.add_node("opportunity_analysis", self._run_opportunity_analysis)
         self.workflow.add_node("synthesis", self._synthesize_results)
@@ -170,38 +173,11 @@ class ThreeCAnalysisOrchestrator:
         self.workflow.add_edge("query_generation", "data_collection")
         self.workflow.add_edge("data_collection", "data_curation")
         
-        # Analysis agents edges with dependency management
-        last_analysis_step = "data_curation"
-        
-        # Customer mapping can run in parallel with consumer analysis
-        if "customer_mapping" in self.selected_agents and "consumer_analysis" in self.selected_agents:
-            self.workflow.add_edge("data_curation", "customer_mapping")
-            self.workflow.add_edge("customer_mapping", "consumer_analysis")
-            last_analysis_step = "consumer_analysis"
-        elif "consumer_analysis" in self.selected_agents:
-            self.workflow.add_edge(last_analysis_step, "consumer_analysis")
-            last_analysis_step = "consumer_analysis"
-        elif "customer_mapping" in self.selected_agents:
-            self.workflow.add_edge(last_analysis_step, "customer_mapping")
-            last_analysis_step = "customer_mapping"
-        
-        # Trend analysis depends on consumer insights for better analysis
-        if "trend_analysis" in self.selected_agents:
-            self.workflow.add_edge(last_analysis_step, "trend_analysis")
-            last_analysis_step = "trend_analysis"
-        
-        # Competitor analysis can run after trend analysis
-        if "competitor_analysis" in self.selected_agents:
-            self.workflow.add_edge(last_analysis_step, "competitor_analysis")
-            last_analysis_step = "competitor_analysis"
-        
-        # SWOT analysis should run after competitor analysis for best results
-        if "swot_analysis" in self.selected_agents:
-            self.workflow.add_edge(last_analysis_step, "swot_analysis")
-            last_analysis_step = "swot_analysis"
+        # Use parallel coordinator for better performance
+        self.workflow.add_edge("data_curation", "parallel_analysis_coordinator")
         
         # Connect to opportunity analysis and final steps
-        self.workflow.add_edge(last_analysis_step, "opportunity_analysis")
+        self.workflow.add_edge("parallel_analysis_coordinator", "opportunity_analysis")
         self.workflow.add_edge("opportunity_analysis", "synthesis")
         self.workflow.add_edge("synthesis", "report_generation")
     
@@ -593,6 +569,297 @@ class ThreeCAnalysisOrchestrator:
                 )
         
         return state
+    
+    @monitor_performance("parallel_analysis", {"component": "3c_orchestrator"})
+    async def _run_parallel_analysis(self, state: MarketResearchState) -> MarketResearchState:
+        """Execute selected agents in parallel with timeout handling for better performance"""
+        try:
+            logger.info("Starting parallel analysis coordination")
+            
+            if self.websocket_manager and self.job_id:
+                await self.websocket_manager.send_status_update(
+                    job_id=self.job_id,
+                    status="processing",
+                    message="Starting parallel analysis coordination",
+                    result={"step": "Parallel Analysis", "status": "starting"}
+                )
+            
+            # Prepare tasks for parallel execution
+            tasks = []
+            agent_names = []
+            
+            # Add selected agents to parallel execution
+            if "consumer_analysis" in self.selected_agents:
+                tasks.append(self._run_consumer_analysis_internal(state))
+                agent_names.append("consumer_analysis")
+            
+            if "trend_analysis" in self.selected_agents:
+                tasks.append(self._run_trend_analysis_internal(state))
+                agent_names.append("trend_analysis")
+            
+            if "competitor_analysis" in self.selected_agents:
+                tasks.append(self._run_competitor_analysis_internal(state))
+                agent_names.append("competitor_analysis")
+            
+            if "swot_analysis" in self.selected_agents:
+                tasks.append(self._run_swot_analysis_internal(state))
+                agent_names.append("swot_analysis")
+            
+            if "customer_mapping" in self.selected_agents:
+                tasks.append(self._run_customer_mapping_internal(state))
+                agent_names.append("customer_mapping")
+            
+            logger.info(f"Executing {len(tasks)} agents in parallel: {agent_names}")
+            
+            # Execute agents in parallel with timeout (3 minutes max)
+            try:
+                results = await asyncio.wait_for(
+                    asyncio.gather(*tasks, return_exceptions=True),
+                    timeout=180.0  # 3 minutes timeout
+                )
+                
+                # Process results and handle any failures
+                for i, result in enumerate(results):
+                    agent_name = agent_names[i]
+                    
+                    if isinstance(result, Exception):
+                        logger.error(f"Agent {agent_name} failed: {result}")
+                        await self.failure_handler.handle_agent_failure(agent_name, result, state)
+                        
+                        if self.websocket_manager and self.job_id:
+                            await self.websocket_manager.send_status_update(
+                                job_id=self.job_id,
+                                status="warning",
+                                message=f"Agent {agent_name} failed: {str(result)}",
+                                error=str(result)
+                            )
+                    else:
+                        # Merge successful results into state
+                        if isinstance(result, dict):
+                            state.update(result)
+                        
+                        logger.info(f"Agent {agent_name} completed successfully")
+                        
+                        if self.websocket_manager and self.job_id:
+                            await self.websocket_manager.send_status_update(
+                                job_id=self.job_id,
+                                status="processing",
+                                message=f"Agent {agent_name} completed successfully",
+                                result={"agent": agent_name, "status": "completed"}
+                            )
+                
+            except asyncio.TimeoutError:
+                logger.error("Parallel execution timed out after 180 seconds")
+                
+                # Handle timeout by marking all agents as failed
+                for agent_name in agent_names:
+                    timeout_error = Exception("Agent execution timed out after 180 seconds")
+                    await self.failure_handler.handle_agent_failure(agent_name, timeout_error, state)
+                
+                if self.websocket_manager and self.job_id:
+                    await self.websocket_manager.send_status_update(
+                        job_id=self.job_id,
+                        status="warning",
+                        message="Parallel analysis timed out, continuing with available data",
+                        error="Execution timeout after 180 seconds"
+                    )
+            
+            # Track workflow metrics
+            await self._track_workflow_metrics(state, "parallel_analysis")
+            
+            logger.info("Parallel analysis coordination completed")
+            
+        except Exception as e:
+            logger.error(f"Parallel analysis coordination failed: {e}")
+            
+            if self.websocket_manager and self.job_id:
+                await self.websocket_manager.send_status_update(
+                    job_id=self.job_id,
+                    status="warning",
+                    message="Parallel analysis coordination failed, continuing with sequential execution",
+                    error=str(e)
+                )
+        
+        return state
+    
+    async def _run_consumer_analysis_internal(self, state: MarketResearchState) -> Dict[str, Any]:
+        """Internal consumer analysis for parallel execution"""
+        try:
+            logger.info("Starting enhanced consumer analysis")
+            
+            if self.websocket_manager and self.job_id:
+                await self.websocket_manager.send_status_update(
+                    job_id=self.job_id,
+                    status="processing",
+                    message="Running consumer analysis",
+                    result={"step": "Consumer Analysis", "status": "running"}
+                )
+            
+            # Execute consumer analysis
+            result = await self.consumer_agent.run(state)
+            
+            # Track performance metrics
+            performance_monitor.record_metric(
+                "workflow_stage_consumer_analysis_completed",
+                1,
+                {"job_id": self.job_id or "unknown"}
+            )
+            
+            if isinstance(result, dict):
+                # Track specific metrics
+                consumer_insights = result.get('consumer_insights', {})
+                if isinstance(consumer_insights, dict) and 'structured_insights' in consumer_insights:
+                    insights_count = len(consumer_insights['structured_insights'])
+                    performance_monitor.record_metric(
+                        "consumer_insights_count",
+                        insights_count,
+                        {"job_id": self.job_id or "unknown"}
+                    )
+                
+                pain_points = result.get('pain_points', [])
+                if isinstance(pain_points, list):
+                    performance_monitor.record_metric(
+                        "pain_points_identified",
+                        len(pain_points),
+                        {"job_id": self.job_id or "unknown"}
+                    )
+            
+            logger.info("Enhanced consumer analysis completed successfully")
+            return result
+            
+        except Exception as e:
+            logger.error(f"Consumer analysis failed: {e}")
+            raise e
+    
+    async def _run_trend_analysis_internal(self, state: MarketResearchState) -> Dict[str, Any]:
+        """Internal trend analysis for parallel execution"""
+        try:
+            logger.info("Starting enhanced trend analysis")
+            
+            if self.websocket_manager and self.job_id:
+                await self.websocket_manager.send_status_update(
+                    job_id=self.job_id,
+                    status="processing",
+                    message="Running trend analysis",
+                    result={"step": "Trend Analysis", "status": "running"}
+                )
+            
+            # Execute trend analysis
+            result = await self.trend_agent.run(state)
+            
+            # Track performance metrics
+            performance_monitor.record_metric(
+                "workflow_stage_trend_analysis_completed",
+                1,
+                {"job_id": self.job_id or "unknown"}
+            )
+            
+            if isinstance(result, dict):
+                market_trends = result.get('market_trends', {})
+                if isinstance(market_trends, dict) and 'structured_trends' in market_trends:
+                    trends_count = len(market_trends['structured_trends'])
+                    performance_monitor.record_metric(
+                        "market_trends_count",
+                        trends_count,
+                        {"job_id": self.job_id or "unknown"}
+                    )
+            
+            logger.info("Enhanced trend analysis completed successfully")
+            return result
+            
+        except Exception as e:
+            logger.error(f"Trend analysis failed: {e}")
+            raise e
+    
+    async def _run_competitor_analysis_internal(self, state: MarketResearchState) -> Dict[str, Any]:
+        """Internal competitor analysis for parallel execution"""
+        try:
+            logger.info("Starting enhanced competitor analysis")
+            
+            if self.websocket_manager and self.job_id:
+                await self.websocket_manager.send_status_update(
+                    job_id=self.job_id,
+                    status="processing",
+                    message="Running competitor analysis",
+                    result={"step": "Competitor Analysis", "status": "running"}
+                )
+            
+            # Execute competitor analysis
+            result = await self.competitor_agent.run(state)
+            
+            # Track performance metrics
+            performance_monitor.record_metric(
+                "workflow_stage_competitor_analysis_completed",
+                1,
+                {"job_id": self.job_id or "unknown"}
+            )
+            
+            logger.info("Enhanced competitor analysis completed successfully")
+            return result
+            
+        except Exception as e:
+            logger.error(f"Competitor analysis failed: {e}")
+            raise e
+    
+    async def _run_swot_analysis_internal(self, state: MarketResearchState) -> Dict[str, Any]:
+        """Internal SWOT analysis for parallel execution"""
+        try:
+            logger.info("Starting enhanced SWOT analysis")
+            
+            if self.websocket_manager and self.job_id:
+                await self.websocket_manager.send_status_update(
+                    job_id=self.job_id,
+                    status="processing",
+                    message="Running SWOT analysis",
+                    result={"step": "SWOT Analysis", "status": "running"}
+                )
+            
+            # Execute SWOT analysis
+            result = await self.swot_agent.run(state)
+            
+            # Track performance metrics
+            performance_monitor.record_metric(
+                "workflow_stage_swot_analysis_completed",
+                1,
+                {"job_id": self.job_id or "unknown"}
+            )
+            
+            logger.info("Enhanced SWOT analysis completed successfully")
+            return result
+            
+        except Exception as e:
+            logger.error(f"SWOT analysis failed: {e}")
+            raise e
+    
+    async def _run_customer_mapping_internal(self, state: MarketResearchState) -> Dict[str, Any]:
+        """Internal customer mapping for parallel execution"""
+        try:
+            logger.info("Starting enhanced customer mapping")
+            
+            if self.websocket_manager and self.job_id:
+                await self.websocket_manager.send_status_update(
+                    job_id=self.job_id,
+                    status="processing",
+                    message="Running customer mapping analysis",
+                    result={"step": "Customer Mapping", "status": "running"}
+                )
+            
+            # Execute customer mapping
+            result = await self.customer_mapping_agent.research_customer_mapping(state)
+            
+            # Track performance metrics
+            performance_monitor.record_metric(
+                "workflow_stage_customer_mapping_completed",
+                1,
+                {"job_id": self.job_id or "unknown"}
+            )
+            
+            logger.info("Enhanced customer mapping completed successfully")
+            return {"customer_mapping_results": result}
+            
+        except Exception as e:
+            logger.error(f"Customer mapping failed: {e}")
+            raise e
     
     @monitor_performance("consumer_analysis", {"component": "3c_orchestrator"})
     async def _run_consumer_analysis(self, state: MarketResearchState) -> MarketResearchState:

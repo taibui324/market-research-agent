@@ -153,6 +153,28 @@ export type AgentType =
 
 export type AnalysisDepth = 'comprehensive' | 'focused' | 'quick';
 
+export type AgentPerformanceMetrics = {
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'retrying';
+  startTime?: Date;
+  endTime?: Date;
+  duration?: number; // in milliseconds
+  progress: number; // 0-100
+  dataPointsCollected?: number;
+  qualityScore?: number; // 0-1
+  errorCount?: number;
+  retryCount?: number;
+  lastError?: string;
+};
+
+export type AgentError = {
+  agentId: string;
+  phase: string;
+  message: string;
+  timestamp: Date;
+  severity: 'warning' | 'error' | 'critical';
+  retryable: boolean;
+};
+
 export type ThreeCAnalysisState = {
   status: string;
   message: string;
@@ -160,10 +182,14 @@ export type ThreeCAnalysisState = {
   progress: number;
   analysisType: AnalysisType;
   targetMarket: string;
+  selectedAgents: string[];
+  agentPerformance: Record<string, AgentPerformanceMetrics>;
+  agentErrors: AgentError[];
   consumerInsights: Array<{
     insight: string;
     confidence: number;
     source: string;
+    agentId?: string;
   }>;
   painPoints: string[];
   customerPersonas: Array<{
@@ -175,12 +201,46 @@ export type ThreeCAnalysisState = {
     trend: string;
     confidence: number;
     source: string;
+    agentId?: string;
   }>;
   trendPredictions: Array<{
     title: string;
     description: string;
     timeHorizon: string;
   }>;
+  competitorAnalysis?: {
+    competitors: Array<{
+      name: string;
+      marketShare?: number;
+      strengths: string[];
+      weaknesses: string[];
+      positioning: string;
+    }>;
+    competitiveMatrix?: {
+      criteria: string[];
+      scores: Record<string, any>;
+    };
+    marketGaps: string[];
+  };
+  swotAnalysis?: {
+    strengths: string[];
+    weaknesses: string[];
+    opportunities: string[];
+    threats: string[];
+  };
+  customerMapping?: {
+    journeyStages: Array<{
+      stage: string;
+      touchpoints: string[];
+      painPoints: string[];
+      opportunities: string[];
+    }>;
+    segments: Array<{
+      name: string;
+      size: string;
+      characteristics: string[];
+    }>;
+  };
   opportunities: Array<{
     title: string;
     description: string;
