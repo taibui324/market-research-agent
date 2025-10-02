@@ -4,13 +4,14 @@ Extends the existing Collector class to handle specialized market research data.
 """
 
 import logging
+import os
 from typing import Dict, List, Any, Optional
 from datetime import datetime
 import asyncio
 import hashlib
 
-from langchain_core.messages import AIMessage
-from tavily import TavilyClient
+from langchain_core.messages import AIMessage, HumanMessage
+from langchain_perplexity import ChatPerplexity
 
 from ..classes import MarketResearchState
 from .collector import Collector
@@ -23,7 +24,19 @@ class MarketDataCollector(Collector):
     
     def __init__(self):
         super().__init__()
-        self.tavily_client = TavilyClient()
+        
+        # Initialize Perplexity client
+        self.perplexity_api_key = os.getenv("PERPLEXITY_API_KEY")
+        if not self.perplexity_api_key:
+            raise ValueError("Missing PERPLEXITY_API_KEY environment variable")
+        
+        self.perplexity_llm = ChatPerplexity(
+            model="sonar",
+            api_key=self.perplexity_api_key,
+            temperature=0.1,
+            max_tokens=2000,
+        )
+        
         self.social_media_sources = [
             "twitter.com", "x.com", "instagram.com", "reddit.com", 
             "facebook.com", "linkedin.com", "youtube.com"
@@ -45,30 +58,34 @@ class MarketDataCollector(Collector):
         
         for query in queries:
             try:
-                # Search social media and review sites
-                social_query = f"{query} site:({' OR site:'.join(self.social_media_sources)})"
-                review_query = f"{query} reviews site:({' OR site:'.join(self.review_sources)})"
+                # Create enhanced queries for social media and reviews
+                social_query = f"Find recent social media discussions and posts about {query} on platforms like Twitter, Instagram, Reddit, Facebook, LinkedIn, and YouTube. Include user opinions, reviews, and trending topics."
+                review_query = f"Find customer reviews and ratings for {query} on platforms like Amazon, Rakuten, Tabelog, Gurunavi, Yelp, TripAdvisor, and Google Reviews. Include both positive and negative feedback."
                 
-                # Collect from social media
-                social_results = await self._search_with_retry(social_query, max_results=10)
+                # Collect from social media using Perplexity
+                social_results = await self._search_with_perplexity(social_query, max_results=10)
                 if social_results:
-                    for result in social_results:
-                        url_hash = hashlib.md5(result['url'].encode()).hexdigest()
+                    for i, result in enumerate(social_results):
+                        url_hash = hashlib.md5(f"social_{query}_{i}".encode()).hexdigest()
                         consumer_data[f"social_{url_hash}"] = {
-                            **result,
+                            'content': result,
+                            'url': f"perplexity_search_{url_hash}",
+                            'title': f"Social Media Insights: {query}",
                             'data_type': 'consumer_social',
                             'query': query,
                             'source_category': 'social_media',
                             'collected_at': datetime.now().isoformat()
                         }
                 
-                # Collect from review sites
-                review_results = await self._search_with_retry(review_query, max_results=10)
+                # Collect from review sites using Perplexity
+                review_results = await self._search_with_perplexity(review_query, max_results=10)
                 if review_results:
-                    for result in review_results:
-                        url_hash = hashlib.md5(result['url'].encode()).hexdigest()
+                    for i, result in enumerate(review_results):
+                        url_hash = hashlib.md5(f"review_{query}_{i}".encode()).hexdigest()
                         consumer_data[f"review_{url_hash}"] = {
-                            **result,
+                            'content': result,
+                            'url': f"perplexity_search_{url_hash}",
+                            'title': f"Customer Reviews: {query}",
                             'data_type': 'consumer_reviews',
                             'query': query,
                             'source_category': 'reviews',
@@ -90,30 +107,34 @@ class MarketDataCollector(Collector):
         
         for query in queries:
             try:
-                # Search industry publications
-                industry_query = f"{query} trends market analysis site:({' OR site:'.join(self.industry_sources)})"
-                report_query = f"{query} market report forecast 2024 2025"
+                # Create enhanced queries for industry trends and reports
+                industry_query = f"Find recent market trends, industry analysis, and business insights about {query} from sources like Nikkei, Food Business Magazine, Restaurant Business Online, QSR Magazine, Food Navigator, and Mintel. Include market forecasts and industry reports."
+                report_query = f"Find comprehensive market reports, forecasts, and analysis for {query} for 2024 and 2025. Include market size, growth projections, and industry trends."
                 
-                # Collect from industry sources
-                industry_results = await self._search_with_retry(industry_query, max_results=8)
+                # Collect from industry sources using Perplexity
+                industry_results = await self._search_with_perplexity(industry_query, max_results=8)
                 if industry_results:
-                    for result in industry_results:
-                        url_hash = hashlib.md5(result['url'].encode()).hexdigest()
+                    for i, result in enumerate(industry_results):
+                        url_hash = hashlib.md5(f"industry_{query}_{i}".encode()).hexdigest()
                         trend_data[f"industry_{url_hash}"] = {
-                            **result,
+                            'content': result,
+                            'url': f"perplexity_search_{url_hash}",
+                            'title': f"Industry Trends: {query}",
                             'data_type': 'market_trends',
                             'query': query,
                             'source_category': 'industry_publications',
                             'collected_at': datetime.now().isoformat()
                         }
                 
-                # Collect market reports
-                report_results = await self._search_with_retry(report_query, max_results=5)
+                # Collect market reports using Perplexity
+                report_results = await self._search_with_perplexity(report_query, max_results=5)
                 if report_results:
-                    for result in report_results:
-                        url_hash = hashlib.md5(result['url'].encode()).hexdigest()
+                    for i, result in enumerate(report_results):
+                        url_hash = hashlib.md5(f"report_{query}_{i}".encode()).hexdigest()
                         trend_data[f"report_{url_hash}"] = {
-                            **result,
+                            'content': result,
+                            'url': f"perplexity_search_{url_hash}",
+                            'title': f"Market Report: {query}",
                             'data_type': 'market_reports',
                             'query': query,
                             'source_category': 'market_reports',
@@ -135,30 +156,34 @@ class MarketDataCollector(Collector):
         
         for query in queries:
             try:
-                # Search for competitor information
-                competitor_query = f"{query} competitors brands companies market share"
-                product_query = f"{query} products features pricing comparison"
+                # Create enhanced queries for competitor analysis
+                competitor_query = f"Find information about competitors, competing brands, and companies in the {query} market. Include market share data, competitive positioning, and key players in the industry."
+                product_query = f"Find detailed product comparisons, features, pricing, and competitive analysis for {query}. Include product specifications, pricing strategies, and competitive advantages."
                 
-                # Collect competitor landscape data
-                competitor_results = await self._search_with_retry(competitor_query, max_results=10)
+                # Collect competitor landscape data using Perplexity
+                competitor_results = await self._search_with_perplexity(competitor_query, max_results=10)
                 if competitor_results:
-                    for result in competitor_results:
-                        url_hash = hashlib.md5(result['url'].encode()).hexdigest()
+                    for i, result in enumerate(competitor_results):
+                        url_hash = hashlib.md5(f"competitor_{query}_{i}".encode()).hexdigest()
                         competitor_data[f"competitor_{url_hash}"] = {
-                            **result,
+                            'content': result,
+                            'url': f"perplexity_search_{url_hash}",
+                            'title': f"Competitor Analysis: {query}",
                             'data_type': 'competitor_landscape',
                             'query': query,
                             'source_category': 'competitor_analysis',
                             'collected_at': datetime.now().isoformat()
                         }
                 
-                # Collect product comparison data
-                product_results = await self._search_with_retry(product_query, max_results=8)
+                # Collect product comparison data using Perplexity
+                product_results = await self._search_with_perplexity(product_query, max_results=8)
                 if product_results:
-                    for result in product_results:
-                        url_hash = hashlib.md5(result['url'].encode()).hexdigest()
+                    for i, result in enumerate(product_results):
+                        url_hash = hashlib.md5(f"product_{query}_{i}".encode()).hexdigest()
                         competitor_data[f"product_{url_hash}"] = {
-                            **result,
+                            'content': result,
+                            'url': f"perplexity_search_{url_hash}",
+                            'title': f"Product Comparison: {query}",
                             'data_type': 'product_comparison',
                             'query': query,
                             'source_category': 'product_analysis',
@@ -172,27 +197,31 @@ class MarketDataCollector(Collector):
         logger.info(f"Collected {len(competitor_data)} competitor data points")
         return competitor_data
     
-    async def _search_with_retry(self, query: str, max_results: int = 10, max_retries: int = 3) -> Optional[List[Dict[str, Any]]]:
-        """Search with retry logic and rate limiting."""
+    async def _search_with_perplexity(self, query: str, max_results: int = 10, max_retries: int = 3) -> Optional[List[str]]:
+        """Search using Perplexity with retry logic and rate limiting."""
         for attempt in range(max_retries):
             try:
-                response = self.tavily_client.search(
-                    query=query,
-                    max_results=max_results,
-                    search_depth="advanced",
-                    include_domains=None,
-                    exclude_domains=None
-                )
+                # Create a message for Perplexity
+                message = HumanMessage(content=query)
                 
-                if response and 'results' in response:
-                    return response['results']
+                # Get response from Perplexity
+                response = await self.perplexity_llm.ainvoke([message])
+                
+                if response and hasattr(response, 'content'):
+                    # Split the response into chunks for better processing
+                    content = response.content
+                    # Split by paragraphs or sections for multiple results
+                    results = [chunk.strip() for chunk in content.split('\n\n') if chunk.strip()]
+                    
+                    # Limit results to max_results
+                    return results[:max_results]
                     
             except Exception as e:
-                logger.warning(f"Search attempt {attempt + 1} failed for query '{query}': {e}")
+                logger.warning(f"Perplexity search attempt {attempt + 1} failed for query '{query}': {e}")
                 if attempt < max_retries - 1:
                     await asyncio.sleep(2 ** attempt)  # Exponential backoff
                 else:
-                    logger.error(f"All search attempts failed for query '{query}'")
+                    logger.error(f"All Perplexity search attempts failed for query '{query}'")
                     
         return None
     
