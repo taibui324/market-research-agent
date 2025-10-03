@@ -128,7 +128,8 @@ class ThreeCAnalysisOrchestrator:
         elif analysis_type == "focused":
             return ["consumer_analysis", "trend_analysis", "competitor_analysis"]
         elif analysis_type == "quick":
-            return ["consumer_analysis", "trend_analysis"]
+            # return ["consumer_analysis", "trend_analysis"]
+            return ["consumer_analysis"]
         else:
             return ["consumer_analysis", "trend_analysis", "competitor_analysis"]
     
@@ -359,8 +360,19 @@ class ThreeCAnalysisOrchestrator:
                 step_count = 0
                 workflow_start_time = datetime.now()
                 
+                # Initialize final_state to accumulate all state updates
+                final_state = {}
+                
                 async for workflow_state in compiled_graph.astream(state):
                     step_count += 1
+                    
+                    # Update final_state with each workflow step, but preserve the report
+                    for key, value in workflow_state.items():
+                        if key == 'report' and value:  # Only update report if it exists and is not empty
+                            final_state['report'] = value
+                            logger.info(f"Report captured in workflow step: {len(value)} characters")
+                        else:
+                            final_state[key] = value
                     
                     # Log workflow progress with monitoring
                     current_step = self._get_current_step(workflow_state)
@@ -414,6 +426,14 @@ class ThreeCAnalysisOrchestrator:
                 )
                 
                 monitor_logger.info(f"Workflow completed successfully: {step_count} steps, {total_duration:.2f}s")
+                
+                # IMPORTANT: Yield the final accumulated state to ensure report is passed through
+                if 'report' in final_state and final_state['report']:
+                    logger.info(f"Yielding final state with report: {len(final_state['report'])} characters")
+                    yield final_state
+                else:
+                    logger.warning("Final state does not contain report, yielding state anyway")
+                    yield final_state
                 
                 # Final completion status
                 if self.websocket_manager and self.job_id:
@@ -1511,9 +1531,12 @@ class ThreeCAnalysisOrchestrator:
             
             # Generate the comprehensive 3C analysis report
             report_content = await self.report_generator.generate_3c_report(state)
+            # report_content = mongodb.get_report(self.job_id)['report']
+            print(report_content)
             
             # Store the report in state
             state['report'] = report_content
+            state['report_content'] = report_content
             state['report_generation_timestamp'] = datetime.now().isoformat()
             
             # Add message about report generation
@@ -1523,6 +1546,7 @@ class ThreeCAnalysisOrchestrator:
             state['messages'] = messages
             
             logger.info(f"Final report generated successfully ({len(report_content)} characters)")
+            logger.info(f"Report stored in state: {len(state.get('report', ''))} characters")
             
             # Track workflow metrics
             await self._track_workflow_metrics(state, "report_generation")

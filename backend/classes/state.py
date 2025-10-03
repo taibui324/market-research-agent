@@ -139,6 +139,8 @@ class ResearchState(InputState):
     competitor_analysis_structured: Dict[str, Any]  # Structured competitor analysis data
     competitor_analysis_metrics: Dict[str, Any]  # Competitor analysis metrics
     report: str
+    consumer_insights_data: Dict[str, Any]
+    customer_mapping_integration: Dict[str, Any]
 
 class MarketResearchState(ResearchState):
     """Enhanced state management for 3C analysis extending existing ResearchState"""

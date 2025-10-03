@@ -137,9 +137,12 @@ class MongoDBService:
             return self._convert_objectid_to_str(swot)
         return None
 
-    def get_report(self, job_id: str) -> Optional[Dict[str, Any]]:
+    def get_report(self, job_id: str,analysis_type: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Retrieve a report by job ID."""
-        report = self.reports.find_one({"job_id": job_id})
+        if analysis_type:
+            report = self.reports.find_one({"job_id": job_id, "analysis_type": analysis_type})
+        else:
+            report = self.reports.find_one({"job_id": job_id})
         if report:
             return self._convert_objectid_to_str(report)
         return None
