@@ -15,6 +15,8 @@ import csv
 import io
 import base64
 from pathlib import Path
+from backend.services.mongodb import MongoDBService
+mongodb_service = MongoDBService()
 
 # Import libraries for advanced export formats
 try:
@@ -261,7 +263,8 @@ class MarketResearchReportGenerator:
             sections.append(await self._generate_executive_summary(state, synthesized_data))
             
             # Consumer analysis section
-            sections.append(await self._generate_consumer_section(state, synthesized_data))
+            # sections.append(await self._generate_consumer_section(state, synthesized_data))
+            sections.append(await self._generate_consumer_section_v2(state, synthesized_data))
             
             # Trend analysis section
             sections.append(await self._generate_trend_section(state, synthesized_data))
@@ -300,7 +303,7 @@ class MarketResearchReportGenerator:
         """
         try:
             synthesized = {
-                'consumer_insights': self._deduplicate_consumer_insights(state),
+                'consumer_insights': self._format_consumer_insights(state),
                 'market_trends': self._deduplicate_market_trends(state),
                 'competitor_profiles': self._deduplicate_competitor_data(state),
                 'opportunities': self._deduplicate_opportunities(state),
@@ -311,17 +314,18 @@ class MarketResearchReportGenerator:
             return synthesized
             
         except Exception as e:
-            logger.error(f"Error synthesizing insights: {e}")
+            raise e    
+            # logger.error(f"Error synthesizing insights: {e}")
             
-            # Return synthesized data with error handling
-            return {
-                'consumer_insights': self._safe_deduplicate_consumer_insights(state),
-                'market_trends': self._safe_deduplicate_market_trends(state),
-                'competitor_profiles': self._handle_competitor_analysis_error(state, e),
-                'opportunities': self._safe_deduplicate_opportunities(state),
-                'data_quality': self._assess_data_quality(state),
-                'key_metrics': self._calculate_key_metrics(state)
-            }
+            # # Return synthesized data with error handling
+            # return {
+            #     'consumer_insights': self._safe_deduplicate_consumer_insights(state),
+            #     'market_trends': self._safe_deduplicate_market_trends(state),
+            #     'competitor_profiles': self._handle_competitor_analysis_error(state, e),
+            #     'opportunities': self._safe_deduplicate_opportunities(state),
+            #     'data_quality': self._assess_data_quality(state),
+            #     'key_metrics': self._calculate_key_metrics(state)
+            # }
     
     def _safe_deduplicate_consumer_insights(self, state: MarketResearchState) -> List[Dict[str, Any]]:
         """Safely deduplicate consumer insights with error handling"""
@@ -347,36 +351,51 @@ class MarketResearchReportGenerator:
             logger.error(f"Error deduplicating opportunities: {e}")
             return []
     
-    def _deduplicate_consumer_insights(self, state: MarketResearchState) -> List[Dict[str, Any]]:
-        """Remove duplicate consumer insights based on content similarity"""
-        consumer_insights = state.get('consumer_insights', {})
+    # def _deduplicate_consumer_insights(self, state: MarketResearchState) -> List[Dict[str, Any]]:
+    #     """Remove duplicate consumer insights based on content similarity"""
+    #     consumer_insights = state.get('consumer_insights', {})
         
-        if not consumer_insights or not consumer_insights.get('structured_insights'):
-            return []
+    #     if not consumer_insights or not consumer_insights.get('structured_insights'):
+    #         return []
         
-        insights = consumer_insights['structured_insights']
-        deduplicated = []
-        seen_content = set()
+    #     insights = consumer_insights['structured_insights']
+    #     deduplicated = []
+    #     seen_content = set()
         
-        for insight in insights:
-            content = insight.get('extracted_insight', '').lower().strip()
+    #     for insight in insights:
+    #         content = insight.get('extracted_insight', '').lower().strip()
             
-            # Create a normalized version for comparison
-            normalized = re.sub(r'[^\w\s]', '', content)
-            normalized = ' '.join(normalized.split())
+    #         # Create a normalized version for comparison
+    #         normalized = re.sub(r'[^\w\s]', '', content)
+    #         normalized = ' '.join(normalized.split())
             
-            # Check for similarity with existing insights
-            is_duplicate = False
-            for seen in seen_content:
-                if self._calculate_similarity(normalized, seen) > 0.6:  # Lower threshold for better deduplication
-                    is_duplicate = True
-                    break
+    #         # Check for similarity with existing insights
+    #         is_duplicate = False
+    #         for seen in seen_content:
+    #             if self._calculate_similarity(normalized, seen) > 0.6:  # Lower threshold for better deduplication
+    #                 is_duplicate = True
+    #                 break
             
-            if not is_duplicate and len(normalized) > 10:
-                seen_content.add(normalized)
-                deduplicated.append(insight)
+    #         if not is_duplicate and len(normalized) > 10:
+    #             seen_content.add(normalized)
+    #             deduplicated.append(insight)
         
-        return deduplicated[:10]  # Limit to top 10 insights
+    #     return deduplicated[:10]  # Limit to top 10 insights
+    def _format_consumer_insights(self, state: Dict[str, Any]) -> Dict[str, Any]:
+        """Format consumer insights from the state"""
+        # Print all keys and their example values for debugging
+        print("=== State Keys & Example Values ===")
+        for key, value in state.items():
+            if isinstance(value, (list, dict)):
+                # Just show a small preview for large data
+                preview = str(value)[:10] + ("..." if len(str(value)) > 200 else "")
+            else:
+                preview = value
+            print(f"- {key}: {preview}")
+        
+        # Return the customer mapping integration data
+        return state.get('customer_mapping_integration', {})
+
     
     def _deduplicate_market_trends(self, state: MarketResearchState) -> List[Dict[str, Any]]:
         """Remove duplicate market trends based on content similarity"""
@@ -669,56 +688,168 @@ class MarketResearchReportGenerator:
             key_findings=key_findings
         )
     
-    async def _generate_consumer_section(self, state: MarketResearchState, synthesized_data: Dict[str, Any]) -> str:
-        """Generate the consumer analysis section"""
-        consumer_content = []
+    # async def _generate_consumer_section_v2(self, state: MarketResearchState) -> str:
+    #     """Generate the consumer analysis section"""
+    #     consumer_content = []
         
-        # Pain points subsection
-        pain_points = state.get('pain_points', [])
+    #     # Pain points subsection
+    #     pain_points = state.get('pain_points', [])
+    #     if pain_points:
+    #         consumer_content.append("### Key Consumer Pain Points")
+    #         for i, pain_point in enumerate(pain_points[:5], 1):
+    #             consumer_content.append(f"{i}. {pain_point}")
+    #         consumer_content.append("")
+        
+    #     # Customer personas subsection
+    #     customer_personas = state.get('customer_personas', [])
+    #     if customer_personas:
+    #         consumer_content.append("### Customer Personas")
+    #         for i, persona in enumerate(customer_personas[:3], 1):
+    #             persona_name = persona.get('name', f'Persona {i}')
+    #             persona_desc = persona.get('description', 'No description available')
+    #             consumer_content.append(f"**{persona_name}:** {persona_desc}")
+    #         consumer_content.append("")
+        
+    #     # Consumer insights subsection
+    #     insights = synthesized_data['consumer_insights']
+    #     if insights:
+    #         consumer_content.append("### Consumer Insights")
+    #         for i, insight in enumerate(insights[:5], 1):
+    #             insight_text = insight.get('extracted_insight', '')
+    #             confidence = insight.get('confidence_score', 0)
+    #             source = insight.get('source', 'Unknown')
+    #             consumer_content.append(f"{i}. {insight_text}")
+    #             consumer_content.append(f"   *Source: {source} | Confidence: {confidence:.2f}*")
+    #         consumer_content.append("")
+        
+    #     # Purchase journey subsection
+    #     purchase_journey = state.get('purchase_journey', {})
+    #     if purchase_journey:
+    #         consumer_content.append("### Purchase Journey Insights")
+    #         for stage, details in purchase_journey.items():
+    #             if isinstance(details, str):
+    #                 consumer_content.append(f"**{stage.title()}:** {details}")
+    #         consumer_content.append("")
+        
+    #     if not consumer_content:
+    #         consumer_content = ["Consumer analysis data is being processed or unavailable.", ""]
+        
+    #     return self.section_templates['consumer_analysis'].format(
+    #         consumer_content="\n".join(consumer_content)
+    #     )
+    
+    
+    
+    
+    async def _generate_consumer_section_v2(
+    self, state: Dict[str, Any], synthesized_data: Dict[str, Any]) -> str:
+        """Generate the consumer analysis section from customer_mapping_integration data"""
+        print('*'*100,'inside the nodes services')
+        # print(synthesized_data)
+        customer_mapping = synthesized_data['consumer_insights']
+        print(customer_mapping)
+        # print(state.get("customer_mapping_integration", {}))
+        print('*'*100)
+        consumer_content = []
+
+        # customer_mapping = data.get("customer_mapping_integration", {})
+        report_metadata = customer_mapping.get("report_metadata", {})
+        insights_summary = customer_mapping.get("consumer_insights_summary", {})
+        processed_entries = insights_summary.get("processed_entries", [])
+        key_themes = insights_summary.get("key_themes", [])
+        data_sources = insights_summary.get("data_sources", [])
+        insight_categories = insights_summary.get("insight_categories", {})
+        sentiment_analysis = insights_summary.get("sentiment_analysis", {})
+        confidence_distribution = insights_summary.get("confidence_distribution", {})
+
+        # Report metadata
+        if report_metadata:
+            consumer_content.append("### Report Metadata")
+            consumer_content.append(f"- **Total Entries Processed:** {report_metadata.get('total_entries_processed', 'N/A')}")
+            consumer_content.append(f"- **Market Focus:** {report_metadata.get('market_focus', 'N/A')}")
+            consumer_content.append(f"- **Report Type:** {report_metadata.get('report_type', 'N/A')}")
+            consumer_content.append(f"- **Data Quality Score:** {report_metadata.get('data_quality_score', 'N/A'):.2f}")
+            consumer_content.append(f"- **Analysis Timestamp:** {report_metadata.get('analysis_timestamp', 'N/A')}")
+            consumer_content.append("")
+
+        # Pain points
+        pain_points = customer_mapping.get("pain_points", [])
         if pain_points:
             consumer_content.append("### Key Consumer Pain Points")
-            for i, pain_point in enumerate(pain_points[:5], 1):
+            for i, pain_point in enumerate(pain_points[:7], 1):
                 consumer_content.append(f"{i}. {pain_point}")
             consumer_content.append("")
-        
-        # Customer personas subsection
-        customer_personas = state.get('customer_personas', [])
-        if customer_personas:
-            consumer_content.append("### Customer Personas")
-            for i, persona in enumerate(customer_personas[:3], 1):
-                persona_name = persona.get('name', f'Persona {i}')
-                persona_desc = persona.get('description', 'No description available')
-                consumer_content.append(f"**{persona_name}:** {persona_desc}")
+
+        # Consumer insights (processed entries)
+        if processed_entries:
+            consumer_content.append("### Consumer Insights (Sample)")
+            for i, entry in enumerate(processed_entries[:5], 1):
+                consumer_content.append(f"{i}. **{entry.get('title', 'Untitled')}**")
+                consumer_content.append(f"   {entry.get('summary', '')}")
+                consumer_content.append(
+                    f"   *Source: {entry.get('source_category', 'Unknown')} | "
+                    f"Confidence: {entry.get('confidence_score', 0):.2f} | "
+                    f"Category: {entry.get('insight_category', 'N/A')} | "
+                    f"Sentiment: {entry.get('sentiment', 'N/A')}*"
+                )
+                if entry.get("citations"):
+                    consumer_content.append("   Citations:")
+                    for c in entry["citations"][:3]:
+                        consumer_content.append(f"     - {c}")
             consumer_content.append("")
-        
-        # Consumer insights subsection
-        insights = synthesized_data['consumer_insights']
-        if insights:
-            consumer_content.append("### Consumer Insights")
-            for i, insight in enumerate(insights[:5], 1):
-                insight_text = insight.get('extracted_insight', '')
-                confidence = insight.get('confidence_score', 0)
-                source = insight.get('source', 'Unknown')
-                consumer_content.append(f"{i}. {insight_text}")
-                consumer_content.append(f"   *Source: {source} | Confidence: {confidence:.2f}*")
+
+        # Key themes
+        if key_themes:
+            consumer_content.append("### Key Themes")
+            for theme in key_themes:
+                consumer_content.append(f"- {theme}")
             consumer_content.append("")
-        
-        # Purchase journey subsection
-        purchase_journey = state.get('purchase_journey', {})
-        if purchase_journey:
-            consumer_content.append("### Purchase Journey Insights")
-            for stage, details in purchase_journey.items():
-                if isinstance(details, str):
-                    consumer_content.append(f"**{stage.title()}:** {details}")
+
+        # Data sources
+        if data_sources:
+            consumer_content.append("### Data Sources")
+            consumer_content.append(", ".join(data_sources))
             consumer_content.append("")
-        
-        if not consumer_content:
+
+        # Insight categories
+        if insight_categories:
+            consumer_content.append("### Insight Categories (counts)")
+            for cat, count in insight_categories.items():
+                consumer_content.append(f"- {cat}: {count}")
+            consumer_content.append("")
+
+        # Sentiment analysis
+        if sentiment_analysis:
+            consumer_content.append("### Sentiment Analysis")
+            for sentiment, count in sentiment_analysis.items():
+                consumer_content.append(f"- {sentiment.title()}: {count}")
+            consumer_content.append("")
+
+        # Confidence distribution
+        if confidence_distribution:
+            consumer_content.append("### Confidence Distribution")
+            for level, count in confidence_distribution.items():
+                consumer_content.append(f"- {level.title()}: {count}")
+            consumer_content.append("")
+
+        # Only use fallback if no meaningful content was generated
+        if not consumer_content or len(consumer_content) <= 2:
             consumer_content = ["Consumer analysis data is being processed or unavailable.", ""]
-        
-        return self.section_templates['consumer_analysis'].format(
+
+        formatted_consumer_content = self.section_templates["consumer_analysis"].format(
             consumer_content="\n".join(consumer_content)
         )
-    
+        print('*'*100,'inside the nodes services')
+        mongodb_service.reports.insert_one({
+            "job_id": state.get("job_id"),
+            "analysis_type": "consumer_analysis_report",
+            "created_at": datetime.now(),
+            "updated_at": datetime.now(),
+            "report": formatted_consumer_content
+        })
+
+        return formatted_consumer_content
+
     async def _generate_trend_section(self, state: MarketResearchState, synthesized_data: Dict[str, Any]) -> str:
         """Generate the market trends analysis section"""
         trend_content = []

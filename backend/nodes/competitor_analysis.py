@@ -315,7 +315,7 @@ Sources:
             content = response.choices[0].message.content.strip()
             if not content:
                 logger.error(f"Empty response from LLM for {company}")
-                return {"company": company, "competitor_analysis": ""}
+                return {"competitor_analysis": ""}
 
             if websocket_manager := context.get("websocket_manager"):
                 if job_id := context.get("job_id"):
@@ -326,10 +326,10 @@ Sources:
                         result={"step": "Competitor Analysis", "company": company},
                     )
 
-            return {"company": company, "competitor_analysis": content}
+            return {"competitor_analysis": content}
         except Exception as e:
             logger.error(f"Error generating competitor analysis for {company}: {e}")
-            return {"company": company, "competitor_analysis": ""}
+            return {"competitor_analysis": ""}
 
     async def _generate_no_competitors_analysis(
         self,
@@ -416,7 +416,7 @@ Sources:
             content = response.choices[0].message.content.strip()
             if not content:
                 logger.error(f"Empty response from LLM for {company}")
-                return {"company": company, "competitor_analysis": ""}
+                return {"competitor_analysis": ""}
 
             if websocket_manager := context.get("websocket_manager"):
                 if job_id := context.get("job_id"):

@@ -479,7 +479,7 @@ async def process_enhanced_3c_analysis(job_id: str, data: MarketResearchRequest)
         # Import MarketResearchState here to avoid circular imports
         from backend.classes.state import MarketResearchState
         from backend.nodes.orchestrator import ThreeCAnalysisOrchestrator
-        
+
         # Determine selected agents based on analysis depth
         selected_agents = data.selected_agents
         if not selected_agents:
@@ -497,7 +497,7 @@ async def process_enhanced_3c_analysis(job_id: str, data: MarketResearchRequest)
                 selected_agents = ["trend_analysis", "consumer_analysis"]
             else:
                 selected_agents = ["consumer_analysis", "trend_analysis", "competitor_analysis"]
-        
+
         # Initialize enhanced orchestrator with new capabilities
         orchestrator = ThreeCAnalysisOrchestrator(
             websocket_manager=manager,
@@ -579,10 +579,10 @@ async def process_enhanced_3c_analysis(job_id: str, data: MarketResearchRequest)
         final_state = {}
         completed_agents = []
         failed_agents = []
-        
+
         async for state in orchestrator.run(initial_state):
             final_state.update(state)
-            
+
             # Track agent completion and performance
             if data.enable_performance_tracking:
                 # Update performance metrics based on state changes
@@ -595,34 +595,29 @@ async def process_enhanced_3c_analysis(job_id: str, data: MarketResearchRequest)
                             "duration": 0,
                             "success": False
                         }
-                
+
                 # Send performance metrics update
                 await manager.send_performance_metrics_update(job_id, performance_metrics)
-        
-        # Ensure we have the final state by running the workflow to completion
-        if not final_state.get('report'):
-            logger.warning("Report not found in final state, attempting to generate report directly")
-            try:
-                # Preserve the target market from the original request
-                if 'target_market' not in final_state and data.target_market:
-                    final_state['target_market'] = data.target_market
-                    logger.info(f"Preserved target market: {data.target_market}")
-                
-                # Import the report generator and generate report directly from final state
-                from backend.services.report_generator import MarketResearchReportGenerator
-                report_generator = MarketResearchReportGenerator()
-                report_content = await report_generator.generate_3c_report(final_state)
-                final_state['report'] = report_content
-                logger.info(f"Successfully generated report directly ({len(report_content)} characters)")
-            except Exception as e:
-                logger.error(f"Failed to generate report directly: {e}")
-                final_state['report_generation_error'] = str(e)
-        
+
+        ## get the report_conrent from db
+        ## how we store it
+        # mongodb_service.reports.insert_one(
+        #     {
+        #         "job_id": state.get("job_id"),
+        #         "analysis_type": "consumer_analysis_report",
+        #         "created_at": datetime.now(),
+        #         "updated_at": datetime.now(),
+        #         "report": formatted_consumer_content,
+        #     }
+        # )
+        ## need to refactor
+        report_content = mongodb.get_report(job_id,analysis_type="consumer_analysis_report")['report']
+
         # Calculate final performance metrics
         workflow_end_time = datetime.now()
         workflow_start_time = datetime.fromisoformat(performance_metrics["workflow_start_time"])
         total_duration = (workflow_end_time - workflow_start_time).total_seconds()
-        
+
         performance_metrics.update({
             "workflow_end_time": workflow_end_time.isoformat(),
             "total_duration": total_duration,
@@ -630,16 +625,13 @@ async def process_enhanced_3c_analysis(job_id: str, data: MarketResearchRequest)
             "completed_agents": completed_agents,
             "failed_agents": failed_agents
         })
-        
-        # Report is now generated as part of the workflow
-        report_content = final_state.get('report')
-        
+
         if report_content:
             logger.info(f"Enhanced 3C Analysis completed successfully (report length: {len(report_content)})")
             job_status[job_id].update({
                 "status": "completed",
                 "report": report_content,
-                "analysis_type": "3c_analysis",
+                "analysis_type": "3c_analysis_backup",
                 "target_market": data.target_market,
                 "last_update": datetime.now().isoformat(),
                 "performance_metrics": performance_metrics
@@ -652,7 +644,7 @@ async def process_enhanced_3c_analysis(job_id: str, data: MarketResearchRequest)
                     "target_market": data.target_market,
                     "performance_metrics": performance_metrics
                 })
-            
+
             # Send final completion update with comprehensive results
             await manager.send_status_update(
                 job_id=job_id,
@@ -680,11 +672,11 @@ async def process_enhanced_3c_analysis(job_id: str, data: MarketResearchRequest)
             )
         else:
             logger.error(f"Enhanced 3C Analysis completed without generating report. State keys: {list(final_state.keys())}")
-            
+
             error_message = "Enhanced 3C Analysis completed but no report was generated"
             if error := final_state.get('error'):
                 error_message = f"Error: {error}"
-            
+
             # Update job status for failed report generation
             job_status[job_id].update({
                 "status": "failed",
@@ -693,7 +685,7 @@ async def process_enhanced_3c_analysis(job_id: str, data: MarketResearchRequest)
                 "last_update": datetime.now().isoformat(),
                 "performance_metrics": performance_metrics
             })
-            
+
             await manager.send_status_update(
                 job_id=job_id,
                 status="failed",
@@ -708,7 +700,7 @@ async def process_enhanced_3c_analysis(job_id: str, data: MarketResearchRequest)
 
     except Exception as e:
         logger.error(f"Enhanced 3C Analysis failed: {str(e)}", exc_info=True)
-        
+
         # Update job status for exception
         job_status[job_id].update({
             "status": "failed",
@@ -716,7 +708,7 @@ async def process_enhanced_3c_analysis(job_id: str, data: MarketResearchRequest)
             "message": f"Enhanced 3C Analysis failed: {str(e)}",
             "last_update": datetime.now().isoformat()
         })
-        
+
         await manager.send_status_update(
             job_id=job_id,
             status="failed",
