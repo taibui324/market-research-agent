@@ -158,7 +158,7 @@ class ThreeCAnalysisOrchestrator:
             self.workflow.add_node("customer_mapping", self._run_customer_mapping)
         
         # Add parallel analysis coordinator for better performance
-        self.workflow.add_node("parallel_analysis_coordinator", self._run_parallel_analysis)
+        # self.workflow.add_node("parallel_analysis_coordinator", self._run_parallel_analysis)
         
         # Always include synthesis and reporting
         self.workflow.add_node("opportunity_analysis", self._run_opportunity_analysis)
@@ -173,11 +173,138 @@ class ThreeCAnalysisOrchestrator:
         self.workflow.add_edge("query_generation", "data_collection")
         self.workflow.add_edge("data_collection", "data_curation")
         
-        # Use parallel coordinator for better performance
-        self.workflow.add_edge("data_curation", "parallel_analysis_coordinator")
+        # Connect data_curation to analysis agents in sequential order
+        # This prevents concurrent update errors by ensuring only one agent runs at a time
         
-        # Connect to opportunity analysis and final steps
-        self.workflow.add_edge("parallel_analysis_coordinator", "opportunity_analysis")
+        # Start with consumer_analysis if selected
+        if "consumer_analysis" in self.selected_agents:
+            self.workflow.add_edge("data_curation", "consumer_analysis")
+            # Connect consumer_analysis to trend_analysis if both are selected
+            if "trend_analysis" in self.selected_agents:
+                self.workflow.add_edge("consumer_analysis", "trend_analysis")
+                # Connect trend_analysis to competitor_analysis if selected
+                if "competitor_analysis" in self.selected_agents:
+                    self.workflow.add_edge("trend_analysis", "competitor_analysis")
+                    # Connect competitor_analysis to swot_analysis if selected
+                    if "swot_analysis" in self.selected_agents:
+                        self.workflow.add_edge("competitor_analysis", "swot_analysis")
+                        # Connect swot_analysis to customer_mapping if selected
+                        if "customer_mapping" in self.selected_agents:
+                            self.workflow.add_edge("swot_analysis", "customer_mapping")
+                            self.workflow.add_edge("customer_mapping", "opportunity_analysis")
+                        else:
+                            self.workflow.add_edge("swot_analysis", "opportunity_analysis")
+                    else:
+                        # No swot_analysis, connect competitor_analysis to customer_mapping or opportunity_analysis
+                        if "customer_mapping" in self.selected_agents:
+                            self.workflow.add_edge("competitor_analysis", "customer_mapping")
+                            self.workflow.add_edge("customer_mapping", "opportunity_analysis")
+                        else:
+                            self.workflow.add_edge("competitor_analysis", "opportunity_analysis")
+                else:
+                    # No competitor_analysis, connect trend_analysis to swot_analysis or customer_mapping
+                    if "swot_analysis" in self.selected_agents:
+                        self.workflow.add_edge("trend_analysis", "swot_analysis")
+                        if "customer_mapping" in self.selected_agents:
+                            self.workflow.add_edge("swot_analysis", "customer_mapping")
+                            self.workflow.add_edge("customer_mapping", "opportunity_analysis")
+                        else:
+                            self.workflow.add_edge("swot_analysis", "opportunity_analysis")
+                    elif "customer_mapping" in self.selected_agents:
+                        self.workflow.add_edge("trend_analysis", "customer_mapping")
+                        self.workflow.add_edge("customer_mapping", "opportunity_analysis")
+                    else:
+                        self.workflow.add_edge("trend_analysis", "opportunity_analysis")
+            else:
+                # No trend_analysis, connect consumer_analysis to competitor_analysis or others
+                if "competitor_analysis" in self.selected_agents:
+                    self.workflow.add_edge("consumer_analysis", "competitor_analysis")
+                    if "swot_analysis" in self.selected_agents:
+                        self.workflow.add_edge("competitor_analysis", "swot_analysis")
+                        if "customer_mapping" in self.selected_agents:
+                            self.workflow.add_edge("swot_analysis", "customer_mapping")
+                            self.workflow.add_edge("customer_mapping", "opportunity_analysis")
+                        else:
+                            self.workflow.add_edge("swot_analysis", "opportunity_analysis")
+                    elif "customer_mapping" in self.selected_agents:
+                        self.workflow.add_edge("competitor_analysis", "customer_mapping")
+                        self.workflow.add_edge("customer_mapping", "opportunity_analysis")
+                    else:
+                        self.workflow.add_edge("competitor_analysis", "opportunity_analysis")
+                elif "swot_analysis" in self.selected_agents:
+                    self.workflow.add_edge("consumer_analysis", "swot_analysis")
+                    if "customer_mapping" in self.selected_agents:
+                        self.workflow.add_edge("swot_analysis", "customer_mapping")
+                        self.workflow.add_edge("customer_mapping", "opportunity_analysis")
+                    else:
+                        self.workflow.add_edge("swot_analysis", "opportunity_analysis")
+                elif "customer_mapping" in self.selected_agents:
+                    self.workflow.add_edge("consumer_analysis", "customer_mapping")
+                    self.workflow.add_edge("customer_mapping", "opportunity_analysis")
+                else:
+                    self.workflow.add_edge("consumer_analysis", "opportunity_analysis")
+        else:
+            # No consumer_analysis, start with trend_analysis if selected
+            if "trend_analysis" in self.selected_agents:
+                self.workflow.add_edge("data_curation", "trend_analysis")
+                if "competitor_analysis" in self.selected_agents:
+                    self.workflow.add_edge("trend_analysis", "competitor_analysis")
+                    if "swot_analysis" in self.selected_agents:
+                        self.workflow.add_edge("competitor_analysis", "swot_analysis")
+                        if "customer_mapping" in self.selected_agents:
+                            self.workflow.add_edge("swot_analysis", "customer_mapping")
+                            self.workflow.add_edge("customer_mapping", "opportunity_analysis")
+                        else:
+                            self.workflow.add_edge("swot_analysis", "opportunity_analysis")
+                    elif "customer_mapping" in self.selected_agents:
+                        self.workflow.add_edge("competitor_analysis", "customer_mapping")
+                        self.workflow.add_edge("customer_mapping", "opportunity_analysis")
+                    else:
+                        self.workflow.add_edge("competitor_analysis", "opportunity_analysis")
+                elif "swot_analysis" in self.selected_agents:
+                    self.workflow.add_edge("trend_analysis", "swot_analysis")
+                    if "customer_mapping" in self.selected_agents:
+                        self.workflow.add_edge("swot_analysis", "customer_mapping")
+                        self.workflow.add_edge("customer_mapping", "opportunity_analysis")
+                    else:
+                        self.workflow.add_edge("swot_analysis", "opportunity_analysis")
+                elif "customer_mapping" in self.selected_agents:
+                    self.workflow.add_edge("trend_analysis", "customer_mapping")
+                    self.workflow.add_edge("customer_mapping", "opportunity_analysis")
+                else:
+                    self.workflow.add_edge("trend_analysis", "opportunity_analysis")
+            else:
+                # No consumer_analysis or trend_analysis, start with competitor_analysis if selected
+                if "competitor_analysis" in self.selected_agents:
+                    self.workflow.add_edge("data_curation", "competitor_analysis")
+                    if "swot_analysis" in self.selected_agents:
+                        self.workflow.add_edge("competitor_analysis", "swot_analysis")
+                        if "customer_mapping" in self.selected_agents:
+                            self.workflow.add_edge("swot_analysis", "customer_mapping")
+                            self.workflow.add_edge("customer_mapping", "opportunity_analysis")
+                        else:
+                            self.workflow.add_edge("swot_analysis", "opportunity_analysis")
+                    elif "customer_mapping" in self.selected_agents:
+                        self.workflow.add_edge("competitor_analysis", "customer_mapping")
+                        self.workflow.add_edge("customer_mapping", "opportunity_analysis")
+                    else:
+                        self.workflow.add_edge("competitor_analysis", "opportunity_analysis")
+                elif "swot_analysis" in self.selected_agents:
+                    self.workflow.add_edge("data_curation", "swot_analysis")
+                    if "customer_mapping" in self.selected_agents:
+                        self.workflow.add_edge("swot_analysis", "customer_mapping")
+                        self.workflow.add_edge("customer_mapping", "opportunity_analysis")
+                    else:
+                        self.workflow.add_edge("swot_analysis", "opportunity_analysis")
+                elif "customer_mapping" in self.selected_agents:
+                    self.workflow.add_edge("data_curation", "customer_mapping")
+                    self.workflow.add_edge("customer_mapping", "opportunity_analysis")
+        
+        # If no agents are selected, connect directly to opportunity_analysis
+        if not any(agent in self.selected_agents for agent in ["consumer_analysis", "trend_analysis", "competitor_analysis", "swot_analysis", "customer_mapping"]):
+            self.workflow.add_edge("data_curation", "opportunity_analysis")
+        
+        # Final pipeline
         self.workflow.add_edge("opportunity_analysis", "synthesis")
         self.workflow.add_edge("synthesis", "report_generation")
     

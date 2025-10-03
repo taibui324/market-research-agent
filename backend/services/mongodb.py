@@ -12,7 +12,7 @@ class MongoDBService:
             # Use default MongoDB URI from environment
             import os
             uri = os.getenv("MONGODB_URI", "mongodb://localhost:27017/")
-        
+
         # Use certifi for SSL certificate verification with updated options
         self.client = MongoClient(
             uri,
@@ -23,6 +23,7 @@ class MongoDBService:
         self.db = self.client.get_database('tavily_research')
         self.jobs = self.db.jobs
         self.reports = self.db.reports
+        self.market_research = self.db.market_research
 
     def _convert_objectid_to_str(self, obj: Any) -> Any:
         """Recursively convert ObjectId instances to strings in a document."""
@@ -70,16 +71,20 @@ class MongoDBService:
             return self._convert_objectid_to_str(job)
         return None
 
-    def store_report(self, job_id: str, 
-                    report_competitor_analyses: Dict[str, Any] = None,
-                    report_main_company: str = None,
-                    report_competitors: list = None,
-                    report_industry: str = None,
-                    report_hq_location: str = None,
-                    report_product_category: str = None,
-                    report_type: str = "competitive_analysis",
-                    report_created_at: str = None,
-                    report_content: str = None) -> None:
+    def store_report(
+        self,
+        job_id: str,
+        report_data: Dict[str, Any] = None,
+        report_competitor_analyses: Dict[str, Any] = None,
+        report_main_company: str = None,
+        report_competitors: list = None,
+        report_industry: str = None,
+        report_hq_location: str = None,
+        report_product_category: str = None,
+        report_type: str = "competitive_analysis",
+        report_created_at: str = None,
+        report_content: str = None,
+    ) -> None:
         """Store the finalized research report with competitor analyses."""
         self.reports.insert_one({
             "job_id": job_id,
@@ -91,7 +96,8 @@ class MongoDBService:
             "hq_location": report_hq_location,
             "product_category": report_product_category,
             "report_type": report_type,
-            "created_at": datetime.now()
+            "created_at": datetime.now(),
+            "report_data": report_data or ""
         })
 
     def save_swot_analysis(self, job_id: str, swot_content: str, company: str = None) -> None:
@@ -103,13 +109,13 @@ class MongoDBService:
             "swot_content": swot_content,
             "created_at": datetime.utcnow()
         }
-        
+
         # Insert into a dedicated SWOT collection
         if not hasattr(self, 'swot_analyses'):
             self.swot_analyses = self.db.swot_analyses
-        
+
         self.swot_analyses.insert_one(swot_doc)
-        
+
         # Also update the job record with SWOT completion status
         self.jobs.update_one(
             {"job_id": job_id},
@@ -125,7 +131,7 @@ class MongoDBService:
         query = {"job_id": job_id}
         if company:
             query["company"] = company
-            
+
         swot = self.swot_analyses.find_one(query)
         if swot:
             return self._convert_objectid_to_str(swot)
@@ -136,4 +142,14 @@ class MongoDBService:
         report = self.reports.find_one({"job_id": job_id})
         if report:
             return self._convert_objectid_to_str(report)
-        return None 
+        return None
+
+    def get_consumer_analysis(self, job_id: str) -> Optional[Dict[str, Any]]:
+        """Retrieve consumer analysis data by job ID and analysis_type=consumer_analysis."""
+        consumer_analysis = self.market_research.find_one({
+            "job_id": job_id,
+            "analysis_type": "consumer_analysis"
+        })
+        if consumer_analysis:
+            return self._convert_objectid_to_str(consumer_analysis)
+        return None

@@ -31,7 +31,7 @@ class CompanyWithCompetitors(TypedDict, total=False):
 
 # Define the input state for main company with competitors
 class InputState(TypedDict, total=False):
-    company: Required[str]
+    company: Required[str]  # Keep as simple str to avoid concurrent update issues
     company_url: NotRequired[str]
     hq_location: NotRequired[str]
     industry: NotRequired[str]
@@ -144,29 +144,29 @@ class MarketResearchState(ResearchState):
     """Enhanced state management for 3C analysis extending existing ResearchState"""
     
     # Consumer Analysis Data
-    consumer_insights: Dict[str, Any]
-    customer_personas: List[Dict[str, Any]]
-    pain_points: List[str]
-    purchase_journey: Dict[str, Any]
+    consumer_insights: Annotated[Dict[str, Any], "Consumer insights and analysis results"]
+    customer_personas: Annotated[List[Dict[str, Any]], "Customer persona profiles"]
+    pain_points: Annotated[List[str], "Identified consumer pain points"]
+    purchase_journey: Annotated[Dict[str, Any], "Consumer purchase journey mapping"]
     
     # Trend Analysis Data
-    market_trends: Dict[str, Any]
-    trend_predictions: List[Dict[str, Any]]
-    adoption_curves: Dict[str, Any]
+    market_trends: Annotated[Dict[str, Any], "Market trends and patterns"]
+    trend_predictions: Annotated[List[Dict[str, Any]], "Future trend predictions"]
+    adoption_curves: Annotated[Dict[str, Any], "Technology adoption curves"]
     
     # Competitor Analysis Data
-    competitor_landscape: Dict[str, Any]
-    competitive_positioning: Dict[str, Any]
-    feature_comparisons: List[Dict[str, Any]]
-    market_gaps: List[str]
+    competitor_landscape: Annotated[Dict[str, Any], "Competitive landscape analysis"]
+    competitive_positioning: Annotated[Dict[str, Any], "Competitive positioning data"]
+    feature_comparisons: Annotated[List[Dict[str, Any]], "Feature comparison matrices"]
+    market_gaps: Annotated[List[str], "Identified market gaps"]
     
     # Opportunity Analysis Data
-    opportunities: List[Dict[str, Any]]
-    white_spaces: List[Dict[str, Any]]
-    recommendations: List[str]
+    opportunities: Annotated[List[Dict[str, Any]], "Market opportunities identified"]
+    white_spaces: Annotated[List[Dict[str, Any]], "White space opportunities"]
+    recommendations: Annotated[List[str], "Strategic recommendations"]
     
     # Market Focus and Segmentation Fields
-    target_market: str  # "japanese_curry" for initial implementation
-    market_segment: str
-    analysis_type: str  # "3c_analysis"
-    market_focus_keywords: List[str]
+    target_market: Annotated[str, "Target market for analysis"]  # "japanese_curry" for initial implementation
+    market_segment: Annotated[str, "Specific market segment"]
+    analysis_type: Annotated[str, "Type of analysis being performed"]  # "3c_analysis"
+    market_focus_keywords: Annotated[List[str], "Keywords for market focus"]

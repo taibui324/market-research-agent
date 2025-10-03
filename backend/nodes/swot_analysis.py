@@ -295,7 +295,7 @@ Sources:
             content = response.choices[0].message.content.strip()
             if not content:
                 logger.error(f"Empty response from LLM for {company}")
-                return {"company": company, "swot": ""}
+                return {"swot": ""}
 
             if websocket_manager := context.get("websocket_manager"):
                 if job_id := context.get("job_id"):
@@ -306,10 +306,10 @@ Sources:
                         result={"step": "SWOT", "company": company},
                     )
 
-            return {"company": company, "swot": content}
+            return {"swot": content}
         except Exception as e:
             logger.error(f"Error generating SWOT for {company}: {e}")
-            return {"company": company, "swot": ""}
+            return {"swot": ""}
 
     async def run(self, state: ResearchState) -> ResearchState:
         """Run combined SWOT for main company using briefing data"""

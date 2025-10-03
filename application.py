@@ -15,12 +15,13 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from typing import Optional, List
 
-from backend.company_single_research import Graph
+# from backend.company_single_research import Graph
 from backend.nodes.orchestrator import ThreeCAnalysisOrchestrator
 from backend.services.mongodb import MongoDBService
 from backend.services.mock_mongodb import MockMongoDBService
 from backend.services.pdf_service import PDFService
 from backend.services.websocket_manager import WebSocketManager
+from langsmith import Client
 
 import json
 
@@ -58,6 +59,9 @@ app = FastAPI(
     description="API for conducting comprehensive company research and analysis",
     version="1.0.0"
 )
+
+client = Client(api_key=os.getenv("LANGCHAIN_API_KEY"))
+
 
 app.add_middleware(
     CORSMiddleware,

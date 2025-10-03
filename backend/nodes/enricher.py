@@ -1,25 +1,32 @@
 import asyncio
 import os
+import re
 from typing import Dict, List
 
-from langchain_core.messages import AIMessage
-from tavily import AsyncTavilyClient
+from langchain_core.messages import AIMessage, HumanMessage
+from langchain_perplexity import ChatPerplexity
 
 from ..classes import ResearchState
 
 
 class Enricher:
-    """Enriches curated documents with raw content."""
+    """Enriches curated documents with raw content using Perplexity."""
 
     def __init__(self) -> None:
-        tavily_key = os.getenv("TAVILY_API_KEY")
-        if not tavily_key:
-            raise ValueError("TAVILY_API_KEY environment variable is not set")
-        self.tavily_client = AsyncTavilyClient(api_key=tavily_key)
+        perplexity_key = os.getenv("PERPLEXITY_API_KEY")
+        if not perplexity_key:
+            raise ValueError("PERPLEXITY_API_KEY environment variable is not set")
+        
+        self.perplexity_llm = ChatPerplexity(
+            model="sonar",
+            api_key=perplexity_key,
+            temperature=0.1,
+            max_tokens=2000,
+        )
         self.batch_size = 20
 
     async def fetch_single_content(self, url: str, websocket_manager=None, job_id=None, category=None) -> Dict[str, str]:
-        """Fetch raw content for a single URL."""
+        """Fetch raw content for a single URL using Perplexity."""
         try:
             if websocket_manager and job_id:
                 await websocket_manager.send_status_update(
@@ -33,8 +40,23 @@ class Enricher:
                     }
                 )
 
-            result = await self.tavily_client.extract(url)
-            if result and result.get('results'):
+            # Create a query for Perplexity to extract content from the URL
+            query = f"""Please provide a comprehensive summary of the content from this URL: {url}
+
+Please include:
+- Key information and main points
+- Important details and data
+- Relevant quotes or excerpts
+- Any notable insights or findings
+
+Focus on extracting the most valuable information from the page."""
+
+            message = HumanMessage(content=query)
+            response = await self.perplexity_llm.ainvoke([message])
+            
+            if response and hasattr(response, 'content'):
+                content = response.content
+                
                 if websocket_manager and job_id:
                     await websocket_manager.send_status_update(
                         job_id=job_id,
@@ -47,7 +69,10 @@ class Enricher:
                             "success": True
                         }
                     )
-                return {url: result['results'][0].get('raw_content', '')}
+                return {url: content}
+            
+            return {url: ''}
+            
         except Exception as e:
             print(f"Error fetching raw content for {url}: {e}")
             error_msg = str(e)
@@ -65,10 +90,9 @@ class Enricher:
                     }
                 )
             return {url: '', "error": error_msg}
-        return {url: ''}
 
     async def fetch_raw_content(self, urls: List[str], websocket_manager=None, job_id=None, category=None) -> Dict[str, str]:
-        """Fetch raw content for multiple URLs in parallel."""
+        """Fetch raw content for multiple URLs in parallel using Perplexity."""
         raw_contents = {}
         total_batches = (len(urls) + self.batch_size - 1) // self.batch_size
 

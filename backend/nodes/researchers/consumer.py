@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 import uuid
 from datetime import datetime
@@ -7,6 +8,7 @@ from typing import Any, Dict, List, Optional
 from langchain_core.messages import AIMessage
 
 from ...classes import MarketResearchState, ConsumerInsight
+from ...services.mongodb import MongoDBService
 from .base import BaseResearcher
 from .customer_mapping import CustomerMappingResearcher
 
@@ -16,8 +18,7 @@ logger = logging.getLogger(__name__)
 class ConsumerAnalysisAgent(BaseResearcher):
     """
     Consumer Analysis Agent for 3C market research focusing on Japanese curry market.
-    Analyzes social media, reviews, and forums to extract consumer insights, pain points,
-    and customer personas.
+    Uses existing database data as context to generate new consumer insights via LLM.
     """
     
     def __init__(self) -> None:
@@ -44,275 +45,459 @@ class ConsumerAnalysisAgent(BaseResearcher):
     async def analyze_consumer_insights(self, state: MarketResearchState) -> Dict[str, Any]:
         """
         Main method to analyze consumer insights for Japanese curry market.
-        Extracts insights from social media, reviews, and forums.
+        Uses existing database data as context to generate new insights via LLM.
+        """
+        try:
+            # Add overall timeout for the entire process
+            return await asyncio.wait_for(
+                self._analyze_consumer_insights_internal(state),
+                timeout=150  # 2.5 minutes total timeout
+            )
+        except asyncio.TimeoutError:
+            logger.error("Consumer analysis timed out after 150 seconds")
+            return {
+                'consumer_insights': {
+                    'raw_data': {},
+                    'structured_insights': [],
+                    'analysis_timestamp': datetime.now().isoformat(),
+                    'market_focus': state.get('target_market', 'japanese_curry'),
+                    'customer_mapping_integration': {},
+                    'error': 'Analysis timed out after 150 seconds'
+                },
+                'pain_points': [],
+                'customer_personas': [],
+                'purchase_journey': {},
+                'customer_mapping_results': {}
+            }
+        except Exception as e:
+            logger.error(f"Consumer analysis failed: {e}")
+            return {
+                'consumer_insights': {
+                    'raw_data': {},
+                    'structured_insights': [],
+                    'analysis_timestamp': datetime.now().isoformat(),
+                    'market_focus': state.get('target_market', 'japanese_curry'),
+                    'customer_mapping_integration': {},
+                    'error': str(e)
+                },
+                'pain_points': [],
+                'customer_personas': [],
+                'purchase_journey': {},
+                'customer_mapping_results': {}
+            }
+
+    async def _analyze_consumer_insights_internal(self, state: MarketResearchState) -> Dict[str, Any]:
+        """
+        Internal method to analyze consumer insights.
         """
         target_market = state.get('target_market', 'japanese_curry')
         company = state.get('company', 'Unknown Company')
+        job_id = state.get('job_id')
         
         msg = [f"👥 Consumer Analysis Agent analyzing {target_market} market for {company}"]
         
-        # Generate consumer-focused search queries
-        queries = await self.generate_consumer_queries(state)
-        
-        # Add message to show subqueries
-        subqueries_msg = "🔍 Consumer analysis queries:\n" + "\n".join([f"• {query}" for query in queries])
-        messages = state.get('messages', [])
-        messages.append(AIMessage(content=subqueries_msg))
-        state['messages'] = messages
-
-        # Send queries through WebSocket
+        # Send initial status update
         if websocket_manager := state.get('websocket_manager'):
-            if job_id := state.get('job_id'):
+            if job_id:
                 await websocket_manager.send_status_update(
                     job_id=job_id,
                     status="processing",
-                    message="Consumer analysis queries generated",
+                    message="Querying existing consumer data from database",
                     result={
                         "step": "Consumer Analysis",
                         "analyst_type": "Consumer Analyst",
-                        "queries": queries,
                         "target_market": target_market
                     }
                 )
         
-        # Collect consumer data from multiple sources
-        consumer_data = {}
+        # Query existing consumer analysis data from MongoDB using new structure
         try:
-            # Search for consumer insights using generated queries
-            for query in queries:
-                documents = await self.search_documents(state, [query])
-                if documents:
-                    for url, doc in documents.items():
-                        doc['query'] = query
-                        doc['analysis_type'] = 'consumer_insight'
-                        consumer_data[url] = doc
-            
-            msg.append(f"\n✓ Found {len(consumer_data)} consumer insight documents")
-            
-            if websocket_manager := state.get('websocket_manager'):
-                if job_id := state.get('job_id'):
-                    await websocket_manager.send_status_update(
-                        job_id=job_id,
-                        status="processing",
-                        message=f"Collected {len(consumer_data)} consumer insight documents",
-                        result={
-                            "step": "Data Collection",
-                            "analyst_type": "Consumer Analyst",
-                            "documents_found": len(consumer_data)
-                        }
-                    )
-                    
+            existing_data = await self.query_existing_consumer_data(job_id, target_market)
         except Exception as e:
-            msg.append(f"\n⚠️ Error during consumer data collection: {str(e)}")
-            logger.error(f"Consumer data collection error: {e}")
+            logger.error(f"Error querying consumer analysis data: {e}")
+            msg.append(f"\n❌ Error querying consumer analysis data: {str(e)}")
+            
+            if websocket_manager and job_id:
+                await websocket_manager.send_status_update(
+                    job_id=job_id,
+                    status="error",
+                    message=f"Failed to query consumer data: {str(e)}",
+                    result={
+                        "step": "Consumer Analysis",
+                        "error": str(e)
+                    }
+                )
+            
+            # Return empty structure if query fails
+            return {
+                'consumer_insights': {
+                    'raw_data': {},
+                    'structured_insights': [],
+                    'analysis_timestamp': datetime.now().isoformat(),
+                    'market_focus': target_market,
+                    'customer_mapping_integration': {},
+                    'error': str(e)
+                },
+                'pain_points': [],
+                'customer_personas': [],
+                'purchase_journey': {},
+                'customer_mapping_results': {}
+            }
         
-        # Extract structured consumer insights
-        consumer_insights = await self.extract_consumer_insights(consumer_data, state)
+        if not existing_data:
+            msg.append(f"\n⚠️ No existing consumer analysis data found for job {job_id}")
+            
+            # Return empty structure if no data found
+            return {
+                'consumer_insights': {
+                    'raw_data': {},
+                    'structured_insights': [],
+                    'analysis_timestamp': datetime.now().isoformat(),
+                    'market_focus': target_market,
+                    'customer_mapping_integration': {}
+                },
+                'pain_points': [],
+                'customer_personas': [],
+                'purchase_journey': {},
+                'customer_mapping_results': {}
+            }
         
-        # Identify pain points from collected data
-        pain_points = await self.identify_pain_points(consumer_data, state)
+        # Extract consumer insights data from the new MongoDB structure
+        consumer_insights = existing_data.get('consumer_insights', {})
+        raw_data = consumer_insights.get('raw_data', {})
+        msg.append(f"\n✓ Found existing consumer analysis data with {len(raw_data)} raw data entries")
         
-        # Generate customer personas
-        customer_personas = await self.generate_customer_personas(consumer_insights, pain_points, state)
+        # Log the consumer analysis data being returned
+        logger.info(f"Returning consumer analysis data for job {job_id}")
+        logger.info(f"Consumer insights keys: {list(consumer_insights.keys()) if consumer_insights else 'None'}")
+        logger.info(f"Pain points count: {len(existing_data.get('pain_points', []))}")
+        logger.info(f"Customer personas count: {len(existing_data.get('customer_personas', []))}")
+        logger.info(f"Purchase journey keys: {list(existing_data.get('purchase_journey', {}).keys())}")
+        logger.info(f"Customer mapping results keys: {list(existing_data.get('customer_mapping_results', {}).keys())}")
         
-        # Map purchase journey
-        purchase_journey = await self.map_purchase_journey(consumer_insights, state)
-        
-        # Integrate customer mapping analysis for enhanced consumer insights
-        customer_mapping_results = await self.integrate_customer_mapping(state, target_market)
-        
-        # Update state with consumer analysis results
-        messages = state.get('messages', [])
-        messages.append(AIMessage(content="\n".join(msg)))
-        
-        # Store results in MarketResearchState format
-        consumer_insights_data = {
-            'raw_data': consumer_data,
-            'structured_insights': consumer_insights,
-            'analysis_timestamp': datetime.now().isoformat(),
-            'market_focus': target_market,
-            'customer_mapping_integration': customer_mapping_results
+        # Prepare the result data
+        result_data = {
+            'consumer_insights': consumer_insights,
+            'pain_points': existing_data.get('pain_points', []),
+            'customer_personas': existing_data.get('customer_personas', []),
+            'purchase_journey': existing_data.get('purchase_journey', {}),
+            'customer_mapping_results': existing_data.get('customer_mapping_results', {})
         }
         
-        # Return state updates - avoid returning conflicting keys
-        # Only return consumer-specific keys to prevent state conflicts
-        return {
-            'consumer_insights': consumer_insights_data,
-            'pain_points': pain_points,
-            'customer_personas': customer_personas,
-            'purchase_journey': purchase_journey,
-            'customer_mapping_results': customer_mapping_results
-        }
+        # Save the consumer analysis results to MongoDB and update state
+        try:
+            # # Save to MongoDB
+            # await self.save_consumer_analysis_results(
+            #     job_id=job_id,
+            #     target_market=target_market,
+            #     consumer_insights_data=consumer_insights,
+            #     pain_points=existing_data.get('pain_points', []),
+            #     customer_personas=existing_data.get('customer_personas', []),
+            #     purchase_journey=existing_data.get('purchase_journey', {}),
+            #     customer_mapping_results=existing_data.get('customer_mapping_results', {})
+            # )
+            # logger.info(f"Successfully saved consumer analysis results to MongoDB for job {job_id}")
+            
+            # Update the state with the consumer analysis data
+            state.update({
+                'consumer_insights': consumer_insights,
+                'pain_points': existing_data.get('pain_points', []),
+                'customer_personas': existing_data.get('customer_personas', []),
+                'purchase_journey': existing_data.get('purchase_journey', {}),
+                'customer_mapping_results': existing_data.get('customer_mapping_results', {})
+            })
+            logger.info(f"Updated state with consumer analysis data for job {job_id}")
+            
+            # Create detailed log file
+            log_filepath = await self.create_detailed_log_file(
+                job_id=job_id,
+                target_market=target_market,
+                consumer_insights_data=consumer_insights,
+                pain_points=existing_data.get('pain_points', []),
+                customer_personas=existing_data.get('customer_personas', []),
+                purchase_journey=existing_data.get('purchase_journey', {}),
+                customer_mapping_results=existing_data.get('customer_mapping_results', {})
+            )
+            
+            if log_filepath:
+                logger.info(f"Detailed log file created: {log_filepath}")
+                # Add log file path to state for reference
+                state['consumer_analysis_log_file'] = log_filepath
+            
+            # Send websocket update about successful save
+            if websocket_manager and job_id:
+                await websocket_manager.send_status_update(
+                    job_id=job_id,
+                    status="processing",
+                    message="Consumer analysis data saved to database, state, and log file",
+                    result={
+                        "step": "Consumer Analysis",
+                        "status": "Data Saved",
+                        "consumer_insights_count": len(consumer_insights.get('structured_insights', [])),
+                        "pain_points_count": len(existing_data.get('pain_points', [])),
+                        "personas_count": len(existing_data.get('customer_personas', [])),
+                        "state_updated": True,
+                        "log_file_created": bool(log_filepath),
+                        "log_file_path": log_filepath if log_filepath else None
+                    }
+                )
+        except Exception as e:
+            logger.error(f"Failed to save consumer analysis results: {e}")
+            if websocket_manager and job_id:
+                await websocket_manager.send_status_update(
+                    job_id=job_id,
+                    status="warning",
+                    message=f"Failed to save consumer analysis data: {str(e)}",
+                    result={
+                        "step": "Consumer Analysis",
+                        "status": "Save Failed",
+                        "error": str(e)
+                    }
+                )
+        
+        # Return the existing consumer analysis data in the expected format
+        return result_data
 
-    async def generate_consumer_queries(self, state: MarketResearchState) -> List[str]:
-        """Generate targeted search queries for consumer analysis of Japanese curry market."""
-        target_market = state.get('target_market', 'japanese_curry')
-        
-        prompt = f"""
-        Generate search queries to understand consumer behavior, preferences, and pain points 
-        in the {target_market} market. Focus on:
-        
-        - Consumer reviews and feedback about Japanese curry products
-        - Social media discussions about Japanese curry preferences and experiences
-        - Forum discussions about Japanese curry cooking, brands, and taste preferences
-        - Consumer complaints and pain points related to Japanese curry products
-        - Purchase behavior and decision factors for Japanese curry products
-        - Consumer preferences for curry flavors, spice levels, and preparation methods
-        
-        Make queries specific to consumer insights and social listening for Japanese curry market.
+    async def generate_insights_from_context(self, consumer_data: Dict[str, Any], state: MarketResearchState) -> List[Dict[str, Any]]:
         """
-        
-        return await self.generate_queries(state, prompt)
-
-    async def extract_consumer_insights(self, consumer_data: Dict[str, Any], state: MarketResearchState) -> List[Dict[str, Any]]:
-        """
-        Extract structured consumer insights from collected data.
-        Uses LLM to analyze content and categorize insights.
+        Use existing consumer data as context to generate new insights via LLM.
         """
         if not consumer_data:
             return []
         
-        insights = []
         websocket_manager = state.get('websocket_manager')
         job_id = state.get('job_id')
         
         try:
-            # Process documents in batches to extract insights
-            for url, doc in consumer_data.items():
-                content = doc.get('content', '')
-                if not content or len(content.strip()) < 50:
-                    continue
+            # Prepare context from existing data
+            context_data = []
+            for data_key, data_entry in consumer_data.items():
+                context_item = {
+                    'title': data_entry.get('title', ''),
+                    'content': data_entry.get('content', ''),
+                    'data_type': data_entry.get('data_type', ''),
+                    'source_category': data_entry.get('source_category', ''),
+                    'query': data_entry.get('query', ''),
+                    'citations': data_entry.get('citations', [])[:3]  # Limit citations
+                }
+                context_data.append(context_item)
+            
+            # Create context summary
+            context_summary = "\n\n".join([
+                f"**{item['title']}** ({item['data_type']})\n"
+                f"Query: {item['query']}\n"
+                f"Content: {item['content'][:500]}...\n"
+                f"Citations: {len(item['citations'])} sources"
+                for item in context_data[:10]  # Limit to top 10 for context
+            ])
+            
+            # Generate new insights using LLM with context
+            insight_prompt = f"""
+            Based on the following consumer data context about Japanese curry market, generate new consumer insights:
+            
+            CONTEXT DATA:
+            {context_summary}
+            
+            Generate 5-8 new consumer insights focusing on:
+            1. Emerging consumer trends and preferences
+            2. Pain points and challenges consumers face
+            3. Purchase behavior patterns and decision factors
+            4. Brand preferences and loyalty factors
+            5. Usage occasions and consumption patterns
+            6. Demographic and psychographic insights
+            7. Market opportunities and gaps
+            8. Competitive landscape insights
+            
+            For each insight, provide:
+            - insight_text: The specific consumer insight
+            - category: One of {self.insight_categories}
+            - sentiment: positive/negative/neutral
+            - confidence: 0.0-1.0 score
+            - evidence: Supporting evidence from the context
+            - implications: Business implications for the market
+            
+            Format as JSON array with insight objects.
+            """
+            
+            response = await asyncio.wait_for(
+                self.openai_client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[
+                        {"role": "system", "content": "You are a consumer insights analyst specializing in Japanese curry market research. Generate new insights based on existing data context."},
+                        {"role": "user", "content": insight_prompt}
+                    ],
+                    temperature=0.3,
+                    max_tokens=1500  # Reduced to speed up response
+                ),
+                timeout=30  # 30 second timeout per LLM call
+            )
+            
+            # Parse LLM response to extract insights
+            insight_text = response.choices[0].message.content
+            
+            # Create structured insight objects
+            insights = []
+            try:
+                import json
+                import re
                 
-                # Use LLM to extract consumer insights from content
-                insight_prompt = f"""
-                Analyze the following consumer content about Japanese curry and extract key insights:
-                
-                Content: {content[:2000]}  # Limit content length
-                
-                Extract and categorize consumer insights focusing on:
-                1. Taste preferences and flavor profiles
-                2. Convenience and preparation concerns
-                3. Price sensitivity and value perception
-                4. Health and ingredient concerns
-                5. Brand preferences and loyalty factors
-                6. Purchase occasions and usage patterns
-                
-                Provide insights in JSON format with fields:
-                - insight_text: The specific consumer insight
-                - category: One of {self.insight_categories}
-                - sentiment: positive/negative/neutral
-                - confidence: 0.0-1.0 score
-                - pain_point: true/false if this represents a consumer pain point
-                """
-                
-                try:
-                    response = await self.openai_client.chat.completions.create(
-                        model="gpt-4o-mini",
-                        messages=[
-                            {"role": "system", "content": "You are a consumer insights analyst specializing in Japanese curry market research."},
-                            {"role": "user", "content": insight_prompt}
-                        ],
-                        temperature=0.3,
-                        max_tokens=1000
-                    )
+                # Try to extract JSON from the response
+                json_match = re.search(r'\[.*\]', insight_text, re.DOTALL)
+                if json_match:
+                    json_str = json_match.group(0)
+                    parsed_insights = json.loads(json_str)
                     
-                    # Parse LLM response to extract insights
-                    insight_text = response.choices[0].message.content
+                    for insight_data in parsed_insights:
+                        insight = {
+                            'insight_id': str(uuid.uuid4()),
+                            'insight_text': insight_data.get('insight_text', ''),
+                            'category': insight_data.get('category', 'general'),
+                            'sentiment': insight_data.get('sentiment', 'neutral'),
+                            'confidence': float(insight_data.get('confidence', 0.7)),
+                            'evidence': insight_data.get('evidence', ''),
+                            'implications': insight_data.get('implications', ''),
+                            'source': 'context_analysis',
+                            'timestamp': datetime.now().isoformat(),
+                            'confidence_score': float(insight_data.get('confidence', 0.7))
+                        }
+                        insights.append(insight)
+                else:
+                    # Fallback: parse line by line for structured text
+                    lines = insight_text.split('\n')
+                    current_insight = {}
                     
-                    # Create structured insight object
-                    insight = {
+                    for line in lines:
+                        line = line.strip()
+                        if line.startswith('{') or line.startswith('"insight_text"'):
+                            if current_insight:
+                                insights.append(current_insight)
+                            current_insight = {
+                                'insight_id': str(uuid.uuid4()),
+                                'source': 'context_analysis',
+                                'timestamp': datetime.now().isoformat(),
+                                'confidence_score': 0.8
+                            }
+                        elif ':' in line and current_insight:
+                            key, value = line.split(':', 1)
+                            key = key.strip().strip('"').strip(',')
+                            value = value.strip().strip('"').strip(',')
+                            current_insight[key] = value
+                    
+                    # Add the last insight
+                    if current_insight:
+                        insights.append(current_insight)
+                
+                # If no insights were parsed, create a fallback
+                if not insights:
+                    insights = [
+                        {
+                            'insight_id': str(uuid.uuid4()),
+                            'insight_text': insight_text[:200] + "...",
+                            'category': 'general',
+                            'sentiment': 'neutral',
+                            'confidence': 0.7,
+                            'source': 'context_analysis',
+                            'timestamp': datetime.now().isoformat(),
+                            'confidence_score': 0.7
+                        }
+                    ]
+                
+            except Exception as e:
+                logger.error(f"Error parsing insights: {e}")
+                # Fallback: create basic insights
+                insights = [
+                    {
                         'insight_id': str(uuid.uuid4()),
-                        'source_url': url,
-                        'source_title': doc.get('title', ''),
-                        'query': doc.get('query', ''),
-                        'raw_content': content[:500],  # Store snippet
-                        'extracted_insight': insight_text,
+                        'insight_text': insight_text[:200] + "...",
+                        'category': 'general',
+                        'sentiment': 'neutral',
+                        'confidence': 0.7,
+                        'source': 'context_analysis',
                         'timestamp': datetime.now().isoformat(),
-                        'confidence_score': 0.8  # Default confidence
+                        'confidence_score': 0.7
                     }
-                    
-                    insights.append(insight)
-                    
-                except Exception as e:
-                    logger.error(f"Error extracting insight from {url}: {e}")
-                    continue
+                ]
             
             if websocket_manager and job_id:
                 await websocket_manager.send_status_update(
                     job_id=job_id,
                     status="processing",
-                    message=f"Extracted {len(insights)} consumer insights",
+                    message=f"Generated {len(insights)} new insights from context",
                     result={
-                        "step": "Insight Extraction",
-                        "insights_extracted": len(insights)
+                        "step": "Context Analysis",
+                        "insights_generated": len(insights)
                     }
                 )
                 
         except Exception as e:
-            logger.error(f"Error in consumer insight extraction: {e}")
+            logger.error(f"Error generating insights from context: {e}")
+            insights = []
         
         return insights
 
-    async def identify_pain_points(self, consumer_data: Dict[str, Any], state: MarketResearchState) -> List[str]:
+    async def generate_pain_points_from_context(self, consumer_data: Dict[str, Any], state: MarketResearchState) -> List[str]:
         """
-        Identify consumer pain points from collected data.
-        Focuses on negative sentiment and complaint patterns.
+        Generate pain points from existing consumer data context.
         """
         if not consumer_data:
             return []
         
-        pain_points = []
         websocket_manager = state.get('websocket_manager')
         job_id = state.get('job_id')
         
         try:
-            # Combine content from multiple sources for pain point analysis
-            combined_content = ""
-            for doc in consumer_data.values():
-                content = doc.get('content', '')
+            # Prepare context for pain point analysis
+            context_content = []
+            for data_entry in consumer_data.values():
+                content = data_entry.get('content', '')
                 if content:
-                    combined_content += content + "\n\n"
+                    context_content.append(content[:300])  # Limit content length
             
-            if not combined_content.strip():
-                return []
+            context_text = "\n\n".join(context_content[:5])  # Limit to 5 items
             
-            # Use LLM to identify pain points
+            # Generate pain points using LLM with context
             pain_point_prompt = f"""
-            Analyze consumer discussions about Japanese curry and identify key pain points and complaints:
+            Based on the following consumer data context about Japanese curry, identify key consumer pain points:
             
-            Content: {combined_content[:3000]}  # Limit content length
+            CONTEXT:
+            {context_text}
             
-            Identify specific consumer pain points related to:
-            - Product quality issues (taste, texture, authenticity)
+            Identify 5-8 specific consumer pain points related to:
+            - Product quality and authenticity issues
             - Convenience and preparation challenges
             - Pricing and value concerns
             - Availability and accessibility issues
             - Health and dietary restrictions
             - Packaging and storage problems
+            - Brand and product selection challenges
             
-            List the top 5-10 most significant pain points as bullet points.
-            Focus on actionable insights that could inform product development.
+            List each pain point as a clear, actionable statement.
+            Focus on insights that could inform product development and marketing strategies.
             """
             
-            response = await self.openai_client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[
-                    {"role": "system", "content": "You are a consumer research analyst identifying pain points in the Japanese curry market."},
-                    {"role": "user", "content": pain_point_prompt}
-                ],
-                temperature=0.2,
-                max_tokens=800
+            response = await asyncio.wait_for(
+                self.openai_client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[
+                        {"role": "system", "content": "You are a consumer research analyst identifying pain points in the Japanese curry market based on existing data context."},
+                        {"role": "user", "content": pain_point_prompt}
+                    ],
+                    temperature=0.2,
+                    max_tokens=600  # Reduced for faster response
+                ),
+                timeout=30  # 30 second timeout
             )
             
             # Parse pain points from response
             pain_point_text = response.choices[0].message.content
             
-            # Extract individual pain points (assuming bullet point format)
+            # Extract individual pain points
+            pain_points = []
             lines = pain_point_text.split('\n')
             for line in lines:
                 line = line.strip()
-                if line and (line.startswith('-') or line.startswith('•') or line.startswith('*')):
-                    pain_point = line.lstrip('-•* ').strip()
+                if line and (line.startswith('-') or line.startswith('•') or line.startswith('*') or line[0].isdigit()):
+                    pain_point = line.lstrip('-•*0123456789. ').strip()
                     if pain_point:
                         pain_points.append(pain_point)
             
@@ -320,43 +505,45 @@ class ConsumerAnalysisAgent(BaseResearcher):
                 await websocket_manager.send_status_update(
                     job_id=job_id,
                     status="processing",
-                    message=f"Identified {len(pain_points)} consumer pain points",
+                    message=f"Generated {len(pain_points)} pain points from context",
                     result={
                         "step": "Pain Point Analysis",
-                        "pain_points_found": len(pain_points)
+                        "pain_points_generated": len(pain_points)
                     }
                 )
                 
         except Exception as e:
-            logger.error(f"Error identifying pain points: {e}")
+            logger.error(f"Error generating pain points from context: {e}")
+            pain_points = []
         
         return pain_points
 
-    async def generate_customer_personas(self, insights: List[Dict[str, Any]], pain_points: List[str], state: MarketResearchState) -> List[Dict[str, Any]]:
+    async def generate_personas_from_context(self, consumer_data: Dict[str, Any], state: MarketResearchState) -> List[Dict[str, Any]]:
         """
-        Generate customer personas based on consumer insights and pain points.
-        Creates 3-5 distinct persona profiles for Japanese curry consumers.
+        Generate customer personas from existing consumer data context.
         """
-        if not insights and not pain_points:
+        if not consumer_data:
             return []
         
-        personas = []
         websocket_manager = state.get('websocket_manager')
         job_id = state.get('job_id')
         
         try:
-            # Prepare data for persona generation
-            insights_summary = "\n".join([insight.get('extracted_insight', '')[:200] for insight in insights[:10]])
-            pain_points_summary = "\n".join([f"- {pp}" for pp in pain_points[:10]])
+            # Prepare context for persona generation
+            context_summary = []
+            for data_entry in consumer_data.values():
+                content = data_entry.get('content', '')
+                if content:
+                    context_summary.append(content[:200])
             
+            context_text = "\n\n".join(context_summary[:8])  # Limit context
+            
+            # Generate personas using LLM with context
             persona_prompt = f"""
-            Based on consumer insights and pain points about Japanese curry, create 3-4 distinct customer personas:
+            Based on the following consumer data context about Japanese curry, create 3-4 distinct customer personas:
             
-            Consumer Insights:
-            {insights_summary}
-            
-            Pain Points:
-            {pain_points_summary}
+            CONTEXT:
+            {context_text}
             
             For each persona, provide:
             - Name and basic demographics
@@ -367,25 +554,27 @@ class ConsumerAnalysisAgent(BaseResearcher):
             - Preferred product attributes
             - Usage occasions and frequency
             
-            Format as JSON array with persona objects containing these fields:
-            name, age_range, lifestyle, consumption_behavior, motivations, pain_points, decision_factors, preferences
+            Create personas that represent different consumer segments in the Japanese curry market.
             """
             
-            response = await self.openai_client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[
-                    {"role": "system", "content": "You are a consumer research analyst creating customer personas for the Japanese curry market."},
-                    {"role": "user", "content": persona_prompt}
-                ],
-                temperature=0.4,
-                max_tokens=1500
+            response = await asyncio.wait_for(
+                self.openai_client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[
+                        {"role": "system", "content": "You are a consumer research analyst creating customer personas for the Japanese curry market based on existing data context."},
+                        {"role": "user", "content": persona_prompt}
+                    ],
+                    temperature=0.4,
+                    max_tokens=1000  # Reduced for faster response
+                ),
+                timeout=30  # 30 second timeout
             )
             
             # Parse personas from response
             persona_text = response.choices[0].message.content
             
-            # Create structured persona objects (simplified parsing)
-            # In a production system, you'd want more robust JSON parsing
+            # Create structured persona objects
+            personas = []
             persona_lines = persona_text.split('\n')
             current_persona = {}
             
@@ -412,63 +601,49 @@ class ConsumerAnalysisAgent(BaseResearcher):
             if current_persona:
                 personas.append(current_persona)
             
-            # Ensure we have at least basic personas if parsing failed
-            if not personas:
-                personas = [
-                    {
-                        'persona_id': str(uuid.uuid4()),
-                        'name': 'Convenience Seeker',
-                        'description': 'Busy professional who values quick and easy Japanese curry solutions',
-                        'characteristics': ['Time-constrained', 'Values convenience', 'Quality conscious'],
-                        'pain_points': ['Long preparation time', 'Complex cooking process'],
-                        'preferences': ['Ready-to-eat options', 'Authentic taste', 'Premium quality']
-                    },
-                    {
-                        'persona_id': str(uuid.uuid4()),
-                        'name': 'Authentic Food Enthusiast',
-                        'description': 'Food lover seeking authentic Japanese curry experiences',
-                        'characteristics': ['Quality focused', 'Authenticity important', 'Willing to pay premium'],
-                        'pain_points': ['Lack of authentic options', 'Inconsistent quality'],
-                        'preferences': ['Traditional recipes', 'High-quality ingredients', 'Restaurant-quality taste']
-                    }
-                ]
-            
             if websocket_manager and job_id:
                 await websocket_manager.send_status_update(
                     job_id=job_id,
                     status="processing",
-                    message=f"Generated {len(personas)} customer personas",
+                    message=f"Generated {len(personas)} customer personas from context",
                     result={
                         "step": "Persona Generation",
-                        "personas_created": len(personas)
+                        "personas_generated": len(personas)
                     }
                 )
                 
         except Exception as e:
-            logger.error(f"Error generating customer personas: {e}")
+            logger.error(f"Error generating personas from context: {e}")
+            personas = []
         
         return personas
 
-    async def map_purchase_journey(self, insights: List[Dict[str, Any]], state: MarketResearchState) -> Dict[str, Any]:
+    async def generate_journey_from_context(self, consumer_data: Dict[str, Any], state: MarketResearchState) -> Dict[str, Any]:
         """
-        Map the customer purchase journey for Japanese curry products.
-        Identifies key touchpoints, decision factors, and conversion barriers.
+        Generate purchase journey from existing consumer data context.
         """
-        if not insights:
+        if not consumer_data:
             return {}
         
         websocket_manager = state.get('websocket_manager')
         job_id = state.get('job_id')
         
         try:
-            # Analyze insights for purchase journey patterns
-            insights_text = "\n".join([insight.get('extracted_insight', '')[:150] for insight in insights[:15]])
+            # Prepare context for journey mapping
+            context_summary = []
+            for data_entry in consumer_data.values():
+                content = data_entry.get('content', '')
+                if content:
+                    context_summary.append(content[:150])
             
+            context_text = "\n\n".join(context_summary[:10])  # Limit context
+            
+            # Generate journey using LLM with context
             journey_prompt = f"""
-            Based on consumer insights about Japanese curry, map the typical customer purchase journey:
+            Based on the following consumer data context about Japanese curry, map the customer purchase journey:
             
-            Consumer Insights:
-            {insights_text}
+            CONTEXT:
+            {context_text}
             
             Identify and describe each stage of the purchase journey:
             1. Awareness - How customers discover Japanese curry products
@@ -484,14 +659,17 @@ class ConsumerAnalysisAgent(BaseResearcher):
             - Opportunities for improvement
             """
             
-            response = await self.openai_client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[
-                    {"role": "system", "content": "You are a customer journey analyst specializing in Japanese curry market research."},
-                    {"role": "user", "content": journey_prompt}
-                ],
-                temperature=0.3,
-                max_tokens=1200
+            response = await asyncio.wait_for(
+                self.openai_client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[
+                        {"role": "system", "content": "You are a customer journey analyst specializing in Japanese curry market research based on existing data context."},
+                        {"role": "user", "content": journey_prompt}
+                    ],
+                    temperature=0.3,
+                    max_tokens=800  # Reduced for faster response
+                ),
+                timeout=30  # 30 second timeout
             )
             
             journey_text = response.choices[0].message.content
@@ -512,32 +690,11 @@ class ConsumerAnalysisAgent(BaseResearcher):
                 'key_insights': []
             }
             
-            # Parse journey stages (simplified - in production, use more sophisticated parsing)
-            lines = journey_text.split('\n')
-            current_stage = None
-            
-            for line in lines:
-                line = line.strip()
-                if any(stage in line.lower() for stage in ['awareness', 'consideration', 'purchase', 'usage', 'loyalty']):
-                    for stage in ['awareness', 'consideration', 'purchase', 'usage', 'loyalty']:
-                        if stage in line.lower():
-                            current_stage = stage
-                            break
-                elif current_stage and line and not line.startswith('#'):
-                    if 'description' not in purchase_journey['stages'][current_stage] or not purchase_journey['stages'][current_stage]['description']:
-                        purchase_journey['stages'][current_stage]['description'] = line
-                    else:
-                        # Add to appropriate list based on content
-                        if 'barrier' in line.lower() or 'friction' in line.lower():
-                            purchase_journey['stages'][current_stage].setdefault('barriers', []).append(line)
-                        else:
-                            purchase_journey['stages'][current_stage].setdefault('key_points', []).append(line)
-            
             if websocket_manager and job_id:
                 await websocket_manager.send_status_update(
                     job_id=job_id,
                     status="processing",
-                    message="Mapped customer purchase journey",
+                    message="Generated purchase journey from context",
                     result={
                         "step": "Journey Mapping",
                         "journey_stages": len(purchase_journey['stages'])
@@ -545,7 +702,7 @@ class ConsumerAnalysisAgent(BaseResearcher):
                 )
                 
         except Exception as e:
-            logger.error(f"Error mapping purchase journey: {e}")
+            logger.error(f"Error generating journey from context: {e}")
             purchase_journey = {
                 'journey_id': str(uuid.uuid4()),
                 'error': str(e),
@@ -553,6 +710,46 @@ class ConsumerAnalysisAgent(BaseResearcher):
             }
         
         return purchase_journey
+
+    async def query_existing_consumer_data(self, job_id: str, target_market: str) -> Optional[Dict[str, Any]]:
+        """
+        Query existing consumer data from MongoDB.
+        Returns the most recent consumer analysis data for the given job and market.
+        """
+        try:
+            mongodb = MongoDBService()
+            
+            # Query the market_research collection for existing consumer data
+            # WE DONT NEED THE JOB_ID
+            query_filter = {
+                "target_market": target_market
+            }
+                        
+            # Find the most recent record - use async pattern with timeout
+            existing_record = await asyncio.wait_for(
+                asyncio.get_event_loop().run_in_executor(
+                    None,
+                    lambda: mongodb.market_research.find_one(
+                        query_filter,
+                        sort=[("created_at", -1)],  # Sort by creation date, most recent first
+                        projection={"_id": 1, "consumer_data": 1, "created_at": 1}  # Only get needed fields
+                    )
+                ),
+                timeout=10  # 10 second timeout for database query
+            )
+            
+            if existing_record:
+                logger.info(f"Found existing consumer data for job {job_id} and market {target_market}")
+                logger.info(f"Existing consumer data: {existing_record}")
+                return existing_record
+            else:
+                logger.info(f"No existing consumer data found for job {job_id} and market {target_market}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"Error querying existing consumer data for job {job_id}: {e}")
+            return None
+
 
     async def integrate_customer_mapping(self, state: MarketResearchState, target_market: str) -> Dict[str, Any]:
         """
@@ -595,8 +792,7 @@ class ConsumerAnalysisAgent(BaseResearcher):
             # Execute customer mapping research
             logger.info(f"Executing customer mapping research for {industry}")
             customer_mapping_results = await self.customer_mapping_researcher.research_customer_mapping(
-                customer_mapping_state, 
-                industry=industry
+                customer_mapping_state
             )
             
             # Extract key insights from customer mapping for integration
@@ -727,6 +923,147 @@ class ConsumerAnalysisAgent(BaseResearcher):
                 'synthesis': 'Failed to synthesize customer mapping insights',
                 'integration_timestamp': datetime.now().isoformat()
             }
+
+    async def save_consumer_analysis_results(self, job_id: str, target_market: str, 
+                                           consumer_insights_data: Dict[str, Any],
+                                           pain_points: List[str], 
+                                           customer_personas: List[Dict[str, Any]],
+                                           purchase_journey: Dict[str, Any],
+                                           customer_mapping_results: Dict[str, Any]) -> None:
+        """
+        Save consumer analysis results to MongoDB with comprehensive logging.
+        """
+        try:
+            logger.info(f"Starting to save consumer analysis results for job {job_id}")
+            logger.info(f"Target market: {target_market}")
+            logger.info(f"Consumer insights data keys: {list(consumer_insights_data.keys()) if consumer_insights_data else 'None'}")
+            logger.info(f"Pain points count: {len(pain_points)}")
+            logger.info(f"Customer personas count: {len(customer_personas)}")
+            logger.info(f"Purchase journey keys: {list(purchase_journey.keys()) if purchase_journey else 'None'}")
+            logger.info(f"Customer mapping results keys: {list(customer_mapping_results.keys()) if customer_mapping_results else 'None'}")
+            
+            mongodb = MongoDBService()
+            
+            # Create consumer analysis document with detailed metadata
+            consumer_analysis_doc = {
+                "job_id": job_id,
+                "target_market": target_market,
+                "consumer_insights": consumer_insights_data,
+                "pain_points": pain_points,
+                "customer_personas": customer_personas,
+                "purchase_journey": purchase_journey,
+                "customer_mapping_results": customer_mapping_results,
+                "analysis_type": "consumer_analysis_report",
+                "created_at": datetime.utcnow(),
+                "updated_at": datetime.utcnow(),
+                "data_summary": {
+                    "consumer_insights_count": len(consumer_insights_data.get('structured_insights', [])),
+                    "pain_points_count": len(pain_points),
+                    "personas_count": len(customer_personas),
+                    "journey_stages_count": len(purchase_journey.get('stages', {})),
+                    "mapping_results_count": len(customer_mapping_results.get('consumer_insights', []))
+                }
+            }
+            
+            logger.info(f"Prepared consumer analysis document with {len(consumer_analysis_doc)} fields")
+            
+            # Save to market_research collection with timeout
+            result = await asyncio.wait_for(
+                asyncio.get_event_loop().run_in_executor(
+                    None,
+                    lambda: mongodb.market_research.insert_one(consumer_analysis_doc)
+                ),
+                timeout=15  # 15 second timeout for database save
+            )
+            
+            logger.info(f"Successfully saved consumer analysis results to MongoDB")
+            logger.info(f"Document ID: {result.inserted_id}")
+            logger.info(f"Job ID: {job_id}, Target Market: {target_market}")
+            
+            # Log summary of saved data
+            logger.info(f"Data summary - Pain points: {len(pain_points)}")
+            logger.info(f"Data summary - Personas: {len(customer_personas)}")
+            logger.info(f"Data summary - Journey stages: {len(purchase_journey.get('stages', {}))}")
+            
+        except asyncio.TimeoutError:
+            logger.error(f"Timeout saving consumer analysis results for job {job_id} after 15 seconds")
+            raise Exception(f"Database save timeout for job {job_id}")
+        except Exception as e:
+            logger.error(f"Error saving consumer analysis results for job {job_id}: {e}")
+            logger.error(f"Target market: {target_market}")
+            logger.error(f"Consumer insights data type: {type(consumer_insights_data)}")
+            logger.error(f"Pain points type: {type(pain_points)}")
+            logger.error(f"Customer personas type: {type(customer_personas)}")
+            raise
+
+    async def create_detailed_log_file(self, job_id: str, target_market: str, 
+                                     consumer_insights_data: Dict[str, Any],
+                                     pain_points: List[str], 
+                                     customer_personas: List[Dict[str, Any]],
+                                     purchase_journey: Dict[str, Any],
+                                     customer_mapping_results: Dict[str, Any]) -> str:
+        """
+        Create a detailed log file for consumer analysis data.
+        Returns the path to the created log file.
+        """
+        try:
+            # Create log file name with timestamp
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            log_filename = f"consumer_analysis_log_{job_id}_{timestamp}.json"
+            log_filepath = f"./backend/tmp/{log_filename}"  # You can change this path as needed
+            
+            # Prepare detailed log data
+            log_data = {
+                "job_id": job_id,
+                "target_market": target_market,
+                "timestamp": datetime.now().isoformat(),
+                "consumer_insights": {
+                    "raw_data_count": len(consumer_insights_data.get('raw_data', {})),
+                    "structured_insights_count": len(consumer_insights_data.get('structured_insights', [])),
+                    "analysis_timestamp": consumer_insights_data.get('analysis_timestamp'),
+                    "market_focus": consumer_insights_data.get('market_focus'),
+                    "insights_sample": consumer_insights_data.get('structured_insights', [])[:3]  # First 3 insights
+                },
+                "pain_points": {
+                    "count": len(pain_points),
+                    "sample": pain_points[:5]  # First 5 pain points
+                },
+                "customer_personas": {
+                    "count": len(customer_personas),
+                    "personas": customer_personas[:2]  # First 2 personas
+                },
+                "purchase_journey": {
+                    "journey_id": purchase_journey.get('journey_id'),
+                    "stages_count": len(purchase_journey.get('stages', {})),
+                    "stages": list(purchase_journey.get('stages', {}).keys())
+                },
+                "customer_mapping_results": {
+                    "consumer_insights_count": len(customer_mapping_results.get('consumer_insights', [])),
+                    "trend_summaries_count": len(customer_mapping_results.get('trend_summaries', [])),
+                    "start_date": customer_mapping_results.get('start_date'),
+                    "end_date": customer_mapping_results.get('end_date')
+                },
+                "data_summary": {
+                    "total_insights": len(consumer_insights_data.get('structured_insights', [])),
+                    "total_pain_points": len(pain_points),
+                    "total_personas": len(customer_personas),
+                    "total_journey_stages": len(purchase_journey.get('stages', {})),
+                    "total_mapping_insights": len(customer_mapping_results.get('consumer_insights', []))
+                }
+            }
+            
+            # Write log file
+            with open(log_filepath, 'w', encoding='utf-8') as f:
+                json.dump(log_data, f, indent=2, ensure_ascii=False, default=str)
+            
+            logger.info(f"Created detailed log file: {log_filepath}")
+            logger.info(f"Log file contains data for job {job_id} with {log_data['data_summary']['total_insights']} insights")
+            
+            return log_filepath
+            
+        except Exception as e:
+            logger.error(f"Error creating detailed log file for job {job_id}: {e}")
+            return ""
 
     async def run(self, state: MarketResearchState) -> Dict[str, Any]:
         """Main entry point for the Consumer Analysis Agent."""
