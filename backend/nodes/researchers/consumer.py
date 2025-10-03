@@ -78,16 +78,23 @@ class ConsumerAnalysisAgent(BaseResearcher):
         # Collect consumer data from multiple sources
         consumer_data = {}
         try:
-            # Search for consumer insights using generated queries
-            for query in queries:
-                documents = await self.search_documents(state, [query])
+            # Search for consumer insights using generated queries (batch process for efficiency)
+            if queries:
+                logger.info(f"Searching for consumer insights using {len(queries)} queries")
+                documents = await self.search_documents(state, queries)
+                
                 if documents:
                     for url, doc in documents.items():
-                        doc['query'] = query
                         doc['analysis_type'] = 'consumer_insight'
                         consumer_data[url] = doc
-            
-            msg.append(f"\n✓ Found {len(consumer_data)} consumer insight documents")
+                    
+                    msg.append(f"\n✓ Found {len(consumer_data)} consumer insight documents")
+                else:
+                    msg.append(f"\n⚠️ No documents found for consumer analysis queries")
+                    logger.warning("No documents found for consumer analysis")
+            else:
+                msg.append(f"\n⚠️ No queries generated for consumer analysis")
+                logger.warning("No queries generated for consumer analysis")
             
             if websocket_manager := state.get('websocket_manager'):
                 if job_id := state.get('job_id'):
@@ -98,13 +105,14 @@ class ConsumerAnalysisAgent(BaseResearcher):
                         result={
                             "step": "Data Collection",
                             "analyst_type": "Consumer Analyst",
-                            "documents_found": len(consumer_data)
+                            "documents_found": len(consumer_data),
+                            "queries_used": len(queries)
                         }
                     )
                     
         except Exception as e:
             msg.append(f"\n⚠️ Error during consumer data collection: {str(e)}")
-            logger.error(f"Consumer data collection error: {e}")
+            logger.error(f"Consumer data collection error: {e}", exc_info=True)
         
         # Extract structured consumer insights
         consumer_insights = await self.extract_consumer_insights(consumer_data, state)
@@ -644,6 +652,8 @@ class ConsumerAnalysisAgent(BaseResearcher):
                 'status': 'failed',
                 'analysis_timestamp': datetime.now().isoformat()
             }
+
+
 
     async def synthesize_customer_mapping_insights(self, customer_mapping_results: Dict[str, Any], target_market: str, state: MarketResearchState) -> Dict[str, Any]:
         """

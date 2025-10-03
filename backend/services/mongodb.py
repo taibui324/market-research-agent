@@ -48,19 +48,30 @@ class MongoDBService:
     def update_job(self, job_id: str, 
                   status: str = None,
                   result: Dict[str, Any] = None,
-                  error: str = None) -> None:
+                  error: str = None,
+                  metadata: Dict[str, Any] = None,
+                  **kwargs) -> None:
         """Update a research job with results or status."""
         update_data = {"updated_at": datetime.utcnow()}
+        
         if status:
             update_data["status"] = status
         if result:
             update_data["result"] = result
         if error:
             update_data["error"] = error
+        if metadata:
+            update_data["metadata"] = metadata
+            
+        # Handle any additional keyword arguments
+        for key, value in kwargs.items():
+            if value is not None:
+                update_data[key] = value
 
         self.jobs.update_one(
             {"job_id": job_id},
-            {"$set": update_data}
+            {"$set": update_data},
+            upsert=True  # Create the job if it doesn't exist
         )
 
     def get_job(self, job_id: str) -> Optional[Dict[str, Any]]:
@@ -70,29 +81,7 @@ class MongoDBService:
             return self._convert_objectid_to_str(job)
         return None
 
-    def store_report(self, job_id: str, 
-                    report_competitor_analyses: Dict[str, Any] = None,
-                    report_main_company: str = None,
-                    report_competitors: list = None,
-                    report_industry: str = None,
-                    report_hq_location: str = None,
-                    report_product_category: str = None,
-                    report_type: str = "competitive_analysis",
-                    report_created_at: str = None,
-                    report_content: str = None) -> None:
-        """Store the finalized research report with competitor analyses."""
-        self.reports.insert_one({
-            "job_id": job_id,
-            "report_content": report_content or "",
-            "competitor_analyses": report_competitor_analyses or {},
-            "main_company": report_main_company,
-            "competitors": report_competitors or [],
-            "industry": report_industry,
-            "hq_location": report_hq_location,
-            "product_category": report_product_category,
-            "report_type": report_type,
-            "created_at": datetime.now()
-        })
+
 
     def save_swot_analysis(self, job_id: str, swot_content: str, company: str = None) -> None:
         """Save SWOT analysis content to the database."""
@@ -136,4 +125,89 @@ class MongoDBService:
         report = self.reports.find_one({"job_id": job_id})
         if report:
             return self._convert_objectid_to_str(report)
-        return None 
+        return None
+
+    def store_report(self, job_id: str, report_data: Dict[str, Any] = None, **kwargs) -> None:
+        """Store a research report with flexible data structure."""
+        # Handle both old and new calling patterns
+        if report_data:
+            # New pattern: store_report(job_id, report_data={...})
+            report_doc = {
+                "job_id": job_id,
+                "created_at": datetime.utcnow(),
+                **report_data
+            }
+        else:
+            # Legacy pattern: store_report(job_id, report_content="...", ...)
+            report_doc = {
+                "job_id": job_id,
+                "created_at": datetime.utcnow(),
+                **kwargs
+            }
+        
+        # Upsert the report (update if exists, create if not)
+        self.reports.update_one(
+            {"job_id": job_id},
+            {"$set": report_doc},
+            upsert=True
+        )
+
+    def delete_job(self, job_id: str) -> bool:
+        """Delete a research job by ID."""
+        result = self.jobs.delete_one({"job_id": job_id})
+        return result.deleted_count > 0
+
+    def list_jobs(self, limit: int = 100, status: str = None) -> list:
+        """List research jobs with optional filtering."""
+        query = {}
+        if status:
+            query["status"] = status
+        
+        cursor = self.jobs.find(query).sort("created_at", -1).limit(limit)
+        jobs = [self._convert_objectid_to_str(job) for job in cursor]
+        return jobs
+
+    def cleanup_old_jobs(self, days: int = 7) -> int:
+        """Clean up old jobs."""
+        from datetime import timedelta
+        cutoff_date = datetime.utcnow() - timedelta(days=days)
+        
+        result = self.jobs.delete_many({
+            "created_at": {"$lt": cutoff_date},
+            "status": {"$in": ["completed", "failed"]}
+        })
+        return result.deleted_count
+
+    def health_check(self) -> bool:
+        """Check if the MongoDB service is healthy."""
+        try:
+            self.client.admin.command('ping')
+            return True
+        except Exception:
+            return False
+
+    def get_stats(self) -> Dict[str, Any]:
+        """Get service statistics."""
+        try:
+            total_jobs = self.jobs.count_documents({})
+            total_reports = self.reports.count_documents({})
+            
+            # Get job status distribution
+            pipeline = [
+                {"$group": {"_id": "$status", "count": {"$sum": 1}}}
+            ]
+            status_counts = {doc["_id"]: doc["count"] for doc in self.jobs.aggregate(pipeline)}
+            
+            return {
+                "total_jobs": total_jobs,
+                "total_reports": total_reports,
+                "service_type": "real",
+                "database": self.db.name,
+                "jobs_by_status": status_counts
+            }
+        except Exception as e:
+            return {
+                "error": str(e),
+                "service_type": "real",
+                "database": self.db.name
+            } 

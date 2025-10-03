@@ -80,16 +80,23 @@ class TrendAnalysisAgent(BaseResearcher):
         # Collect trend data from multiple sources
         trend_data = {}
         try:
-            # Search for trend insights using generated queries
-            for query in queries:
-                documents = await self.search_documents(state, [query])
+            # Search for trend insights using generated queries (batch process for efficiency)
+            if queries:
+                logger.info(f"Searching for trend insights using {len(queries)} queries")
+                documents = await self.search_documents(state, queries)
+                
                 if documents:
                     for url, doc in documents.items():
-                        doc['query'] = query
                         doc['analysis_type'] = 'trend_analysis'
                         trend_data[url] = doc
-            
-            msg.append(f"\n✓ Found {len(trend_data)} trend analysis documents")
+                    
+                    msg.append(f"\n✓ Found {len(trend_data)} trend analysis documents")
+                else:
+                    msg.append(f"\n⚠️ No documents found for trend analysis queries")
+                    logger.warning("No documents found for trend analysis")
+            else:
+                msg.append(f"\n⚠️ No queries generated for trend analysis")
+                logger.warning("No queries generated for trend analysis")
             
             if websocket_manager := state.get('websocket_manager'):
                 if job_id := state.get('job_id'):
@@ -100,13 +107,14 @@ class TrendAnalysisAgent(BaseResearcher):
                         result={
                             "step": "Data Collection",
                             "analyst_type": "Trend Analyst",
-                            "documents_found": len(trend_data)
+                            "documents_found": len(trend_data),
+                            "queries_used": len(queries)
                         }
                     )
                     
         except Exception as e:
             msg.append(f"\n⚠️ Error during trend data collection: {str(e)}")
-            logger.error(f"Trend data collection error: {e}")
+            logger.error(f"Trend data collection error: {e}", exc_info=True)
         
         # Extract structured market trends
         market_trends = await self.extract_market_trends(trend_data, state)
