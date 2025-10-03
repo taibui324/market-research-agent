@@ -611,11 +611,11 @@ class ThreeCAnalysisOrchestrator:
             
             logger.info(f"Executing {len(tasks)} agents in parallel: {agent_names}")
             
-            # Execute agents in parallel with timeout (3 minutes max)
+            # Execute agents in parallel with extended timeout (8 minutes max)
             try:
                 results = await asyncio.wait_for(
                     asyncio.gather(*tasks, return_exceptions=True),
-                    timeout=180.0  # 3 minutes timeout
+                    timeout=480.0  # 8 minutes timeout for comprehensive analysis
                 )
                 
                 # Process results and handle any failures
@@ -649,11 +649,11 @@ class ThreeCAnalysisOrchestrator:
                             )
                 
             except asyncio.TimeoutError:
-                logger.error("Parallel execution timed out after 180 seconds")
+                logger.error("Parallel execution timed out after 480 seconds")
                 
                 # Handle timeout by marking all agents as failed
                 for agent_name in agent_names:
-                    timeout_error = Exception("Agent execution timed out after 180 seconds")
+                    timeout_error = Exception("Agent execution timed out after 480 seconds")
                     await self.failure_handler.handle_agent_failure(agent_name, timeout_error, state)
                 
                 if self.websocket_manager and self.job_id:
@@ -661,7 +661,7 @@ class ThreeCAnalysisOrchestrator:
                         job_id=self.job_id,
                         status="warning",
                         message="Parallel analysis timed out, continuing with available data",
-                        error="Execution timeout after 180 seconds"
+                        error="Execution timeout after 480 seconds"
                     )
             
             # Track workflow metrics
