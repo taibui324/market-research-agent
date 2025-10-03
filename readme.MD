@@ -593,7 +593,6 @@ Then, open `ui/.env` and add your frontend environment variables:
 ```env
 VITE_API_URL=http://localhost:8000
 VITE_WS_URL=ws://localhost:8000
-VITE_GOOGLE_MAPS_API_KEY=your_google_maps_api_key_here
 ```
 
 ### Docker Setup
@@ -631,7 +630,6 @@ Then, open `ui/.env` and add your frontend environment variables:
 ```env
 VITE_API_URL=http://localhost:8000
 VITE_WS_URL=ws://localhost:8000
-VITE_GOOGLE_MAPS_API_KEY=your_google_maps_api_key_here
 ```
 
 3. Build and start the containers:

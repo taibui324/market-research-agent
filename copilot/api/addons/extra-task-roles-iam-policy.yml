@@ -1,0 +1,29 @@
+Parameters:
+    App:
+        Type: String
+        Description: Your application's name.
+    Env:
+        Type: String
+        Description: The environment name your service, job, or workflow is being deployed to.
+    Name:
+        Type: String
+        Description: Your workload's name.
+Resources:
+    ExtrasTaskRoleAddonsAccessPolicy:
+        Type: AWS::IAM::ManagedPolicy
+        Properties:
+            PolicyDocument:
+                Version: "2012-10-17"
+                Statement:
+                    - Sid: SecretAccess
+                      Effect: Allow
+                      Action:
+                          - secretsmanager:GetSecretValue # pragma: allowlist secret
+                      Resource:
+                          - "*"
+
+Outputs:
+    # 1. You need to output the IAM ManagedPolicy so that Copilot can add it as a managed policy to your ECS task role.
+    ExtrasTaskRoleAddonsAccessPolicyArn:
+        Description: "The ARN of the ManagedPolicy to attach to the task role."
+        Value: !Ref ExtrasTaskRoleAddonsAccessPolicy

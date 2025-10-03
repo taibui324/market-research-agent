@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import Optional, List
 
@@ -54,10 +55,14 @@ console_handler = logging.StreamHandler()
 logger.addHandler(console_handler)
 
 app = FastAPI(
-    title="Tavily Company Research API",
+    title="Company Research API",
     description="API for conducting comprehensive company research and analysis",
     version="1.0.0"
 )
+
+# Create API router for all endpoints
+from fastapi import APIRouter
+api_router = APIRouter(prefix="/api")
 
 app.add_middleware(
     CORSMiddleware,
@@ -66,6 +71,12 @@ app.add_middleware(
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
+
+# Include API router
+app.include_router(api_router)
+
+# Mount static files at root (must be last to avoid conflicts with API routes)
+app.mount("/", StaticFiles(directory=os.getenv("STATIC_DIR", "ui/dist"), html=True), name="static")
 
 manager = WebSocketManager()
 pdf_service = PDFService({"pdf_output_dir": "pdfs"})
@@ -140,7 +151,7 @@ class SharedReportRequest(BaseModel):
     job_id: str
     expiration_days: Optional[int] = 30
 
-@app.options("/research")
+@api_router.options("/research")
 async def preflight():
     response = JSONResponse(content=None, status_code=200)
     response.headers["Access-Control-Allow-Origin"] = "*"
@@ -148,7 +159,7 @@ async def preflight():
     response.headers["Access-Control-Allow-Headers"] = "Content-Type"
     return response
 
-@app.options("/research/3c-analysis")
+@api_router.options("/research/3c-analysis")
 async def preflight_3c():
     response = JSONResponse(content=None, status_code=200)
     response.headers["Access-Control-Allow-Origin"] = "*"
@@ -156,7 +167,7 @@ async def preflight_3c():
     response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
     return response
 
-@app.post("/research")
+@api_router.post("/research")
 async def research(data: ResearchRequest):
     try:
         logger.info(f"Received research request for {data.company}")
@@ -167,7 +178,7 @@ async def research(data: ResearchRequest):
             "status": "accepted",
             "job_id": job_id,
             "message": "Research started. Connect to WebSocket for updates.",
-            "websocket_url": f"/research/ws/{job_id}",
+            "websocket_url": f"/api/research/ws/{job_id}",
             "analysis_type": "company_research"
         })
         response.headers["Access-Control-Allow-Origin"] = "*"
@@ -179,7 +190,7 @@ async def research(data: ResearchRequest):
         logger.error(f"Error initiating research: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/research/3c-analysis")
+@api_router.post("/research/3c-analysis")
 async def market_research(data: MarketResearchRequest):
     """Enhanced endpoint for 3C market research analysis with agent selection and performance tracking"""
     try:
@@ -225,7 +236,7 @@ async def market_research(data: MarketResearchRequest):
             "status": "accepted",
             "job_id": job_id,
             "message": "Enhanced 3C Analysis started. Connect to WebSocket for real-time updates.",
-            "websocket_url": f"/research/ws/{job_id}",
+            "websocket_url": f"/api/research/ws/{job_id}",
             "analysis_configuration": {
                 "analysis_type": "3c_analysis",
                 "analysis_depth": data.analysis_depth,
@@ -898,11 +909,11 @@ async def generate_3c_report(state: dict) -> str:
         logger.error(f"Error generating 3C report: {e}")
         return f"# 3C Analysis Report\n\nError generating report: {str(e)}"
 
-@app.get("/")
+@api_router.get("/")
 async def ping():
     return {"message": "Alive"}
 
-@app.get("/research/capabilities")
+@api_router.get("/research/capabilities")
 async def get_analysis_capabilities():
     """Get available analysis capabilities, agents, and configuration options"""
     return {
@@ -1012,7 +1023,7 @@ async def get_analysis_capabilities():
         "priority_levels": ["high", "normal", "low"]
     }
 
-@app.get("/research/agents/{agent_name}/status")
+@api_router.get("/research/agents/{agent_name}/status")
 async def get_agent_status(agent_name: str):
     """Get detailed status and capabilities of a specific agent"""
     agent_info = {
@@ -1084,7 +1095,7 @@ async def get_agent_status(agent_name: str):
     
     return agent_info[agent_name]
 
-@app.get("/research/performance/metrics")
+@api_router.get("/research/performance/metrics")
 async def get_performance_metrics():
     """Get system-wide performance metrics and statistics"""
     # This would typically come from a monitoring system
@@ -1142,7 +1153,7 @@ async def get_performance_metrics():
         }
     }
 
-@app.post("/company_analysis", tags=["company_analysis"])
+@api_router.post("/company_analysis", tags=["company_analysis"])
 async def company_analysis(data: ResearchRequest):
     """
     Start comprehensive research and analysis for a main company and its competitors.
@@ -1181,7 +1192,7 @@ async def run_analysis_background(job_id: str, data: ResearchRequest):
     """Background task to run the analysis"""
     await process_research(job_id, data)
 
-@app.get("/job_status/{job_id}", tags=["job_status"])
+@api_router.get("/job_status/{job_id}", tags=["job_status"])
 async def get_job_status(job_id: str):
     """Get the status of a specific job"""
     if job_id not in job_status:
@@ -1198,7 +1209,7 @@ async def get_job_status(job_id: str):
         "completed_at": job_status[job_id]["completed_at"]
     }
 
-@app.get("/research/job/{job_id}/status")
+@api_router.get("/research/job/{job_id}/status")
 async def get_enhanced_job_status(job_id: str):
     """Get enhanced job status with performance metrics and agent details"""
     if job_id not in job_status:
@@ -1242,7 +1253,7 @@ def _get_agent_status_from_metrics(performance_metrics: dict, agent_name: str) -
         "end_time": agent_perf.get("end_time")
     }
 
-@app.get("/job_result/{job_id}", tags=["job_result"])
+@api_router.get("/job_result/{job_id}", tags=["job_result"])
 async def get_job_result(job_id: str):
     """Get the result of a completed job"""
     if job_id not in job_status:
@@ -1257,7 +1268,7 @@ async def get_job_result(job_id: str):
         "result": job_status[job_id]["result"]
     }
 
-@app.get("/company_analysis/pdf/{filename}", tags=["company_analysis"], summary="Get PDF Report", description="Download a generated PDF report by filename")
+@api_router.get("/company_analysis/pdf/{filename}", tags=["company_analysis"], summary="Get PDF Report", description="Download a generated PDF report by filename")
 async def get_pdf(filename: str):
     """
     Download a PDF report by filename.
@@ -1269,7 +1280,7 @@ async def get_pdf(filename: str):
         raise HTTPException(status_code=404, detail="PDF not found")
     return FileResponse(pdf_path, media_type='application/pdf', filename=filename)
 
-@app.websocket("/research/ws/{job_id}")
+@app.websocket("/api/research/ws/{job_id}")
 async def enhanced_websocket_endpoint(websocket: WebSocket, job_id: str):
     """
     Enhanced WebSocket endpoint for real-time research progress updates with agent-specific tracking.
@@ -1339,7 +1350,7 @@ async def enhanced_websocket_endpoint(websocket: WebSocket, job_id: str):
         logger.error(f"Enhanced WebSocket error for job {job_id}: {str(e)}", exc_info=True)
         manager.disconnect(websocket, job_id)
 
-@app.websocket("/company_analysis/ws/{job_id}")
+@app.websocket("/api/company_analysis/ws/{job_id}")
 async def legacy_websocket_endpoint(websocket: WebSocket, job_id: str):
     """
     Legacy WebSocket endpoint for backward compatibility.
@@ -1371,7 +1382,7 @@ async def legacy_websocket_endpoint(websocket: WebSocket, job_id: str):
         logger.error(f"WebSocket error for job {job_id}: {str(e)}", exc_info=True)
         manager.disconnect(websocket, job_id)
 
-@app.get("/company_analysis/{job_id}", tags=["company_analysis"], summary="Get Research Job Status", description="Retrieve the status and details of a research job")
+@api_router.get("/company_analysis/{job_id}", tags=["company_analysis"], summary="Get Research Job Status", description="Retrieve the status and details of a research job")
 async def get_research(job_id: str):
     """
     Get the status and details of a research job.
@@ -1386,7 +1397,7 @@ async def get_research(job_id: str):
         raise HTTPException(status_code=404, detail="Research job not found")
     return job_status[job_id]
 
-@app.get("/company_analysis/{job_id}/report", tags=["company_analysis"], summary="Get Research Report", description="Retrieve the final research report for a completed job")
+@api_router.get("/company_analysis/{job_id}/report", tags=["company_analysis"], summary="Get Research Report", description="Retrieve the final research report for a completed job")
 async def get_research_report(job_id: str):
     """
     Get the final research report for a completed job.
@@ -1433,7 +1444,7 @@ async def get_research_report(job_id: str):
         logger.error(f"Error retrieving report from database: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to retrieve report: {str(e)}")
 
-@app.post("/generate-pdf", tags=["company_analysis"], summary="Generate PDF Report", description="Generate a PDF from markdown content and stream it to the client")
+@api_router.post("/generate-pdf", tags=["company_analysis"], summary="Generate PDF Report", description="Generate a PDF from markdown content and stream it to the client")
 async def generate_pdf(data: PDFGenerationRequest):
     """
     Generate a PDF from markdown content and stream it to the client.
@@ -1456,7 +1467,7 @@ async def generate_pdf(data: PDFGenerationRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/shared-reports")
+@api_router.post("/shared-reports")
 async def create_shared_report(data: SharedReportRequest):
     """Create a shareable link for a report"""
     try:
@@ -1508,7 +1519,7 @@ async def create_shared_report(data: SharedReportRequest):
         logger.error(f"Error creating shared report: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/shared-reports/{share_id}")
+@api_router.get("/shared-reports/{share_id}")
 async def get_shared_report(share_id: str):
     """Get a shared report by ID"""
     try:
@@ -1541,7 +1552,7 @@ async def get_shared_report(share_id: str):
         logger.error(f"Error retrieving shared report: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.delete("/shared-reports/{share_id}")
+@api_router.delete("/shared-reports/{share_id}")
 async def delete_shared_report(share_id: str):
     """Delete a shared report"""
     try:

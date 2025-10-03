@@ -24,8 +24,8 @@ if not os.getenv("TAVILY_API_KEY"):
 if not os.getenv("OPENAI_API_KEY"):
     logger.warning("OPENAI_API_KEY environment variable is not set.")
 
-if not os.getenv("GEMINI_API_KEY"):
-    logger.warning("GEMINI_API_KEY environment variable is not set.")
+# if not os.getenv("GEMINI_API_KEY"):
+#     logger.warning("GEMINI_API_KEY environment variable is not set.")
 
 # from .company_single_research import Graph
 
