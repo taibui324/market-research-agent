@@ -231,9 +231,11 @@ class ThreeCAnalysisOrchestrator:
                 
                 step_count = 0
                 workflow_start_time = datetime.now()
+                final_workflow_state = None
                 
                 async for workflow_state in compiled_graph.astream(state):
                     step_count += 1
+                    final_workflow_state = workflow_state  # Keep track of the final state
                     
                     # Log workflow progress with monitoring
                     current_step = self._get_current_step(workflow_state)
@@ -301,6 +303,20 @@ class ThreeCAnalysisOrchestrator:
                             "completion_time": datetime.now().isoformat()
                         }
                     )
+                
+                # Record workflow duration metric
+                performance_monitor.record_metric(
+                    "workflow_duration_seconds",
+                    total_duration,
+                    {"job_id": job_id, "target_market": target_market}
+                )
+                
+                monitor_logger.info(f"Workflow completed successfully in {total_duration:.2f} seconds")
+                
+                # Ensure we yield the final complete state with all data including the report
+                if final_workflow_state:
+                    monitor_logger.info(f"Yielding final state with report: {bool(final_workflow_state.get('report'))}")
+                    yield final_workflow_state
                     
             except Exception as e:
                 # Log error with comprehensive context

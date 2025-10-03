@@ -603,6 +603,11 @@ async def process_enhanced_3c_analysis(job_id: str, data: MarketResearchRequest)
         if not final_state.get('report'):
             logger.warning("Report not found in final state, attempting to generate report directly")
             try:
+                # Preserve the target market from the original request
+                if 'target_market' not in final_state and data.target_market:
+                    final_state['target_market'] = data.target_market
+                    logger.info(f"Preserved target market: {data.target_market}")
+                
                 # Import the report generator and generate report directly from final state
                 from backend.services.report_generator import MarketResearchReportGenerator
                 report_generator = MarketResearchReportGenerator()
