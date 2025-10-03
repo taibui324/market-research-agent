@@ -359,12 +359,14 @@ class ThreeCAnalysisOrchestrator:
                 
                 step_count = 0
                 workflow_start_time = datetime.now()
+                final_workflow_state = None
                 
                 # Initialize final_state to accumulate all state updates
                 final_state = {}
                 
                 async for workflow_state in compiled_graph.astream(state):
                     step_count += 1
+                    final_workflow_state = workflow_state  # Keep track of the final state
                     
                     # Update final_state with each workflow step, but preserve the report
                     for key, value in workflow_state.items():
@@ -448,6 +450,20 @@ class ThreeCAnalysisOrchestrator:
                             "completion_time": datetime.now().isoformat()
                         }
                     )
+                
+                # Record workflow duration metric
+                performance_monitor.record_metric(
+                    "workflow_duration_seconds",
+                    total_duration,
+                    {"job_id": job_id, "target_market": target_market}
+                )
+                
+                monitor_logger.info(f"Workflow completed successfully in {total_duration:.2f} seconds")
+                
+                # Ensure we yield the final complete state with all data including the report
+                if final_workflow_state:
+                    monitor_logger.info(f"Yielding final state with report: {bool(final_workflow_state.get('report'))}")
+                    yield final_workflow_state
                     
             except Exception as e:
                 # Log error with comprehensive context
@@ -758,11 +774,11 @@ class ThreeCAnalysisOrchestrator:
             
             logger.info(f"Executing {len(tasks)} agents in parallel: {agent_names}")
             
-            # Execute agents in parallel with timeout (3 minutes max)
+            # Execute agents in parallel with extended timeout (8 minutes max)
             try:
                 results = await asyncio.wait_for(
                     asyncio.gather(*tasks, return_exceptions=True),
-                    timeout=180.0  # 3 minutes timeout
+                    timeout=480.0  # 8 minutes timeout for comprehensive analysis
                 )
                 
                 # Process results and handle any failures
@@ -796,11 +812,11 @@ class ThreeCAnalysisOrchestrator:
                             )
                 
             except asyncio.TimeoutError:
-                logger.error("Parallel execution timed out after 180 seconds")
+                logger.error("Parallel execution timed out after 480 seconds")
                 
                 # Handle timeout by marking all agents as failed
                 for agent_name in agent_names:
-                    timeout_error = Exception("Agent execution timed out after 180 seconds")
+                    timeout_error = Exception("Agent execution timed out after 480 seconds")
                     await self.failure_handler.handle_agent_failure(agent_name, timeout_error, state)
                 
                 if self.websocket_manager and self.job_id:
@@ -808,7 +824,7 @@ class ThreeCAnalysisOrchestrator:
                         job_id=self.job_id,
                         status="warning",
                         message="Parallel analysis timed out, continuing with available data",
-                        error="Execution timeout after 180 seconds"
+                        error="Execution timeout after 480 seconds"
                     )
             
             # Track workflow metrics

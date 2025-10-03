@@ -12,6 +12,7 @@ import hashlib
 
 from langchain_core.messages import AIMessage, HumanMessage
 from langchain_perplexity import ChatPerplexity
+from tavily import AsyncTavilyClient
 
 from ..classes import MarketResearchState
 from .collector import Collector
@@ -26,17 +27,16 @@ class MarketDataCollector(Collector):
     def __init__(self):
         super().__init__()
 
-        # Initialize Perplexity client
-        self.perplexity_api_key = os.getenv("PERPLEXITY_API_KEY")
-        if not self.perplexity_api_key:
-            raise ValueError("Missing PERPLEXITY_API_KEY environment variable")
+        # Disable Perplexity due to API issues, use Tavily only
+        logger.info("Using Tavily as primary search provider (Perplexity disabled)")
+        self.perplexity_llm = None
 
-        self.perplexity_llm = ChatPerplexity(
-            model="sonar",
-            api_key=self.perplexity_api_key,
-            temperature=0.1,
-            max_tokens=2000,
-        )
+        # Initialize Tavily client as fallback
+        self.tavily_api_key = os.getenv("TAVILY_API_KEY")
+        if not self.tavily_api_key:
+            raise ValueError("Missing TAVILY_API_KEY environment variable")
+        
+        self.tavily_client = AsyncTavilyClient(api_key=self.tavily_api_key)
 
         self.social_media_sources = [
             "twitter.com", "x.com", "instagram.com", "reddit.com", 
@@ -412,32 +412,59 @@ class MarketDataCollector(Collector):
 
     # Keep the old method for backward compatibility
     async def _search_with_perplexity(self, query: str, max_results: int = 10, max_retries: int = 3) -> Optional[List[str]]:
-        """Search using Perplexity with retry logic and rate limiting."""
-        for attempt in range(max_retries):
-            try:
-                # Create a message for Perplexity
-                message = HumanMessage(content=query)
+        """Search using Perplexity with retry logic and Tavily fallback."""
+        
+        # First try Perplexity if available
+        if self.perplexity_llm:
+            for attempt in range(max_retries):
+                try:
+                    # Create a message for Perplexity
+                    message = HumanMessage(content=query)
 
-                # Get response from Perplexity
-                response = await self.perplexity_llm.ainvoke([message])
+                    # Get response from Perplexity
+                    response = await self.perplexity_llm.ainvoke([message])
 
-                if response and hasattr(response, 'content'):
-                    # Split the response into chunks for better processing
-                    content = response.content
-                    # Split by paragraphs or sections for multiple results
-                    results = [chunk.strip() for chunk in content.split('\n\n') if chunk.strip()]
+                    if response and hasattr(response, 'content'):
+                        # Split the response into chunks for better processing
+                        content = response.content
+                        # Split by paragraphs or sections for multiple results
+                        results = [chunk.strip() for chunk in content.split('\n\n') if chunk.strip()]
 
-                    # Limit results to max_results
-                    return results[:max_results]
+                        # Limit results to max_results
+                        logger.info(f"Perplexity search successful: {len(results)} results for query '{query}'")
+                        return results[:max_results]
 
-            except Exception as e:
-                logger.warning(f"Perplexity search attempt {attempt + 1} failed for query '{query}': {e}")
-                if attempt < max_retries - 1:
-                    await asyncio.sleep(2 ** attempt)  # Exponential backoff
-                else:
-                    logger.error(f"All Perplexity search attempts failed for query '{query}'")
+                except Exception as e:
+                    logger.warning(f"Perplexity search attempt {attempt + 1} failed for query '{query}': {e}")
+                    if attempt < max_retries - 1:
+                        await asyncio.sleep(2 ** attempt)  # Exponential backoff
 
-        return None
+        # If Perplexity fails or is not available, fall back to Tavily
+        logger.info(f"Using Tavily for query: {query}")
+        try:
+            tavily_results = await self.tavily_client.search(
+                query=query,
+                max_results=max_results,
+                search_depth="advanced"
+            )
+            
+            if tavily_results and 'results' in tavily_results:
+                # Extract content from Tavily results
+                results = []
+                for result in tavily_results['results'][:max_results]:
+                    content = result.get('content', '')
+                    if content:
+                        results.append(content)
+                
+                logger.info(f"Tavily search successful: {len(results)} results for query '{query}'")
+                return results
+                
+        except Exception as e:
+            logger.error(f"Tavily search also failed for query '{query}': {e}")
+
+        # If both fail, return empty list to allow workflow to continue
+        logger.warning(f"All search methods failed for query '{query}', returning empty results")
+        return []
 
     async def collect_market_research_data(self, state: MarketResearchState) -> MarketResearchState:
         """Main method to collect all market research data with caching."""

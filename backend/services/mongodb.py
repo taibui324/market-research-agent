@@ -49,19 +49,30 @@ class MongoDBService:
     def update_job(self, job_id: str, 
                   status: str = None,
                   result: Dict[str, Any] = None,
-                  error: str = None) -> None:
+                  error: str = None,
+                  metadata: Dict[str, Any] = None,
+                  **kwargs) -> None:
         """Update a research job with results or status."""
         update_data = {"updated_at": datetime.utcnow()}
+        
         if status:
             update_data["status"] = status
         if result:
             update_data["result"] = result
         if error:
             update_data["error"] = error
+        if metadata:
+            update_data["metadata"] = metadata
+            
+        # Handle any additional keyword arguments
+        for key, value in kwargs.items():
+            if value is not None:
+                update_data[key] = value
 
         self.jobs.update_one(
             {"job_id": job_id},
-            {"$set": update_data}
+            {"$set": update_data},
+            upsert=True  # Create the job if it doesn't exist
         )
 
     def get_job(self, job_id: str) -> Optional[Dict[str, Any]]:
