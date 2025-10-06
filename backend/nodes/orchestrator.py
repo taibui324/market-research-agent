@@ -368,13 +368,45 @@ class ThreeCAnalysisOrchestrator:
                     step_count += 1
                     final_workflow_state = workflow_state  # Keep track of the final state
                     
-                    # Update final_state with each workflow step, but preserve the report
-                    for key, value in workflow_state.items():
-                        if key == 'report' and value:  # Only update report if it exists and is not empty
-                            final_state['report'] = value
-                            logger.info(f"Report captured in workflow step: {len(value)} characters")
+                    # LangGraph returns state organized by node names, need to extract actual state content
+                    # Check if this is a node-organized state or direct state
+                    if isinstance(workflow_state, dict):
+                        # Look for node-organized state (keys are node names like 'report_generation')
+                        node_keys = ['query_generation', 'data_collection', 'data_curation', 'consumer_analysis', 
+                                   'trend_analysis', 'competitor_analysis', 'swot_analysis', 'customer_mapping',
+                                   'opportunity_analysis', 'synthesis', 'report_generation']
+                        
+                        is_node_organized = any(key in node_keys for key in workflow_state.keys())
+                        
+                        if is_node_organized:
+                            # Extract state from node-organized structure
+                            for node_name, node_state in workflow_state.items():
+                                if isinstance(node_state, dict):
+                                    # Merge node state into final_state
+                                    for key, value in node_state.items():
+                                        if key == 'report' and value and len(str(value).strip()) > 0:
+                                            final_state['report'] = value
+                                            logger.info(f"Report captured from node {node_name}: {len(value)} characters")
+                                        else:
+                                            final_state[key] = value
                         else:
-                            final_state[key] = value
+                            # Direct state structure - handle as before
+                            for key, value in workflow_state.items():
+                                if key == 'report':
+                                    # Always update report if it has content, preserve existing if new one is empty
+                                    if value and len(str(value).strip()) > 0:
+                                        final_state['report'] = value
+                                        logger.info(f"Report captured in workflow step: {len(value)} characters")
+                                    # Don't overwrite existing report with empty value
+                                else:
+                                    final_state[key] = value
+                    
+                    # Additional check: Look for report in any nested structure
+                    if 'report' not in final_state or not final_state.get('report'):
+                        report_found = self._extract_report_from_state(workflow_state)
+                        if report_found:
+                            final_state['report'] = report_found
+                            logger.info(f"Report extracted from nested state: {len(report_found)} characters")
                     
                     # Log workflow progress with monitoring
                     current_step = self._get_current_step(workflow_state)
@@ -461,9 +493,24 @@ class ThreeCAnalysisOrchestrator:
                 monitor_logger.info(f"Workflow completed successfully in {total_duration:.2f} seconds")
                 
                 # Ensure we yield the final complete state with all data including the report
-                if final_workflow_state:
-                    monitor_logger.info(f"Yielding final state with report: {bool(final_workflow_state.get('report'))}")
+                if final_state and final_state.get('report'):
+                    # Use final_state which has accumulated all updates including the report
+                    monitor_logger.info(f"Yielding final state with report: {len(final_state['report'])} characters")
+                    yield final_state
+                elif final_state:
+                    # Final state exists but no report
+                    monitor_logger.warning(f"Final state exists but no report found. Keys: {list(final_state.keys())}")
+                    # Try to get report from final_workflow_state as fallback
+                    if final_workflow_state and final_workflow_state.get('report'):
+                        final_state['report'] = final_workflow_state['report']
+                        monitor_logger.info(f"Retrieved report from final_workflow_state: {len(final_state['report'])} characters")
+                    yield final_state
+                elif final_workflow_state:
+                    # Fallback to final_workflow_state if final_state is empty
+                    monitor_logger.info(f"Yielding final workflow state with report: {bool(final_workflow_state.get('report'))}")
                     yield final_workflow_state
+                else:
+                    monitor_logger.error("No final state to yield!")
                     
             except Exception as e:
                 # Log error with comprehensive context
@@ -1746,6 +1793,29 @@ Please check system logs for detailed error information.
         
         score = sum(weight for condition, weight in quality_indicators if condition)
         return min(score, 1.0)  # Cap at 1.0
+    
+    def _extract_report_from_state(self, state: Dict[str, Any]) -> Optional[str]:
+        """Extract report from nested state structures that LangGraph might create"""
+        try:
+            # Direct report key
+            if 'report' in state and state['report']:
+                return state['report']
+            
+            # Look in node-organized structure
+            for key, value in state.items():
+                if isinstance(value, dict):
+                    if 'report' in value and value['report']:
+                        return value['report']
+                    
+                    # Recursive search in nested dictionaries
+                    nested_report = self._extract_report_from_state(value)
+                    if nested_report:
+                        return nested_report
+            
+            return None
+        except Exception as e:
+            logger.error(f"Error extracting report from state: {e}")
+            return None
     
     def _get_market_keywords(self, target_market: str) -> List[str]:
         """Get market-specific keywords for enhanced search"""

@@ -37,7 +37,8 @@ class MarketDataCollector(Collector):
             raise ValueError("Missing TAVILY_API_KEY environment variable")
         
         self.tavily_client = AsyncTavilyClient(api_key=self.tavily_api_key)
-
+        
+        # Initialize data source categories
         self.social_media_sources = [
             "twitter.com", "x.com", "instagram.com", "reddit.com", 
             "facebook.com", "linkedin.com", "youtube.com"
@@ -50,6 +51,26 @@ class MarketDataCollector(Collector):
             "nikkei.com", "foodbusinessmagazine.com", "restaurantbusinessonline.com",
             "qsrmagazine.com", "foodnavigator.com", "mintel.com"
         ]
+
+    async def _search_with_tavily(self, query: str, max_results: int = 5) -> List[Dict[str, Any]]:
+        """Search using Tavily API with rate limiting."""
+        try:
+            # Use Tavily search with timeout
+            result = await asyncio.wait_for(
+                self.tavily_client.search(
+                    query=query,
+                    search_depth="basic",
+                    include_raw_content=False,
+                    max_results=max_results
+                ),
+                timeout=15.0
+            )
+            
+            return result.get("results", [])
+            
+        except Exception as e:
+            logger.error(f"Tavily search failed for query '{query}': {e}")
+            return []
 
     async def check_existing_market_data(self, job_id: str, target_market: str) -> Optional[Dict[str, Any]]:
         """Check if market data already exists in MongoDB and is recent (within 24 hours)."""
@@ -153,48 +174,39 @@ class MarketDataCollector(Collector):
                         f"{query} reviews site:({' OR site:'.join(self.review_sources)})"
                     )
 
-                    # Collect from social media using Perplexity
-                    social_results = await self._search_with_perplexity_enhanced(social_query, max_results=10)
+                    # Collect from social media using Tavily
+                    social_results = await self._search_with_tavily(social_query, max_results=5)
                     if social_results:
                         for i, result in enumerate(social_results):
-                            url_hash = hashlib.md5(f"social_{query}_{i}".encode()).hexdigest()
-                            consumer_data[f"social_{url_hash}"] = {
+                            url = result.get('url', f"tavily_social_{i}")
+                            consumer_data[url] = {
                                 'content': result.get('content', ''),
-                                'url': result.get('url', f"perplexity_search_{url_hash}"),
-                                'title': f"Social Media Insights: {query}",
+                                'url': url,
+                                'title': result.get('title', f"Social Media Insights: {query}"),
                                 'data_type': 'consumer_social',
                                 'query': query,
                                 'source_category': 'social_media',
                                 'collected_at': datetime.now().isoformat(),
-                                # Enhanced metadata from Perplexity
-                                'citations': result.get('citations', []),
-                                'search_results': result.get('search_results', []),
-                                'usage_metadata': result.get('usage_metadata', {}),
-                                'response_metadata': result.get('response_metadata', {}),
-                                'generation_info': result.get('generation_info'),
-                                'raw_response': result.get('raw_response', {})
+                                'score': result.get('score', 0.5)
                             }
 
-                    # Collect from review sites using Perplexity
-                    review_results = await self._search_with_perplexity_enhanced(review_query, max_results=10)
+                    # Add delay between searches for rate limiting
+                    await asyncio.sleep(1)
+
+                  
+                    review_results = await self._search_with_tavily(review_query, max_results=5)
                     if review_results:
                         for i, result in enumerate(review_results):
-                            url_hash = hashlib.md5(f"review_{query}_{i}".encode()).hexdigest()
-                            consumer_data[f"review_{url_hash}"] = {
+                            url = result.get('url', f"tavily_review_{i}")
+                            consumer_data[url] = {
                                 'content': result.get('content', ''),
-                                'url': result.get('url', f"perplexity_search_{url_hash}"),
-                                'title': f"Customer Reviews: {query}",
+                                'url': url,
+                                'title': result.get('title', f"Customer Reviews: {query}"),
                                 'data_type': 'consumer_reviews',
                                 'query': query,
                                 'source_category': 'reviews',
                                 'collected_at': datetime.now().isoformat(),
-                                # Enhanced metadata from Perplexity
-                                'citations': result.get('citations', []),
-                                'search_results': result.get('search_results', []),
-                                'usage_metadata': result.get('usage_metadata', {}),
-                                'response_metadata': result.get('response_metadata', {}),
-                                'generation_info': result.get('generation_info'),
-                                'raw_response': result.get('raw_response', {})
+                                'score': result.get('score', 0.5)
                             }
 
                 except Exception as e:
@@ -217,8 +229,8 @@ class MarketDataCollector(Collector):
                     industry_query = f"{query} trends market analysis site:({' OR site:'.join(self.industry_sources)})"
                     report_query = f"{query} market report forecast 2024 2025"
 
-                    # Collect from industry sources using Perplexity
-                    industry_results = await self._search_with_perplexity_enhanced(industry_query, max_results=8)
+                    # Collect from industry sources using Tavily
+                    industry_results = await self._search_with_tavily(industry_query, max_results=5)
                     if industry_results:
                         for i, result in enumerate(industry_results):
                             url_hash = hashlib.md5(f"industry_{query}_{i}".encode()).hexdigest()
@@ -239,8 +251,8 @@ class MarketDataCollector(Collector):
                                 'raw_response': result.get('raw_response', {})
                             }
 
-                    # Collect market reports using Perplexity
-                    report_results = await self._search_with_perplexity_enhanced(report_query, max_results=5)
+                    # Collect market reports using Tavily
+                    report_results = await self._search_with_tavily(report_query, max_results=5)
                     if report_results:
                         for i, result in enumerate(report_results):
                             url_hash = hashlib.md5(f"report_{query}_{i}".encode()).hexdigest()
@@ -281,8 +293,8 @@ class MarketDataCollector(Collector):
                     competitor_query = f"Find information about competitors, competing brands, and companies in the {query} market. Include market share data, competitive positioning, and key players in the industry."
                     product_query = f"Find detailed product comparisons, features, pricing, and competitive analysis for {query}. Include product specifications, pricing strategies, and competitive advantages."
 
-                    # Collect competitor landscape data using Perplexity
-                    competitor_results = await self._search_with_perplexity_enhanced(competitor_query, max_results=10)
+                    # Collect competitor landscape data using Tavily
+                    competitor_results = await self._search_with_tavily(competitor_query, max_results=5)
                     if competitor_results:
                         for i, result in enumerate(competitor_results):
                             url_hash = hashlib.md5(f"competitor_{query}_{i}".encode()).hexdigest()
@@ -303,8 +315,8 @@ class MarketDataCollector(Collector):
                                 'raw_response': result.get('raw_response', {})
                             }
 
-                    # Collect product comparison data using Perplexity
-                    product_results = await self._search_with_perplexity_enhanced(product_query, max_results=8)
+                    # Collect product comparison data using Tavily
+                    product_results = await self._search_with_tavily(product_query, max_results=5)
                     if product_results:
                         for i, result in enumerate(product_results):
                             url_hash = hashlib.md5(f"product_{query}_{i}".encode()).hexdigest()
