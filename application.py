@@ -1570,11 +1570,53 @@ async def delete_shared_report(share_id: str):
         logger.error(f"Error deleting shared report: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-# Include API router
+
+
 app.include_router(api_router)
 
-# Mount static files for the UI (excluding API routes)
-app.mount("/ui", StaticFiles(directory=os.getenv("STATIC_DIR", "ui/dist"), html=True), name="static")
+
+@app.get("/{full_path:path}")
+async def serve_static_files(full_path: str):
+    """Serve static files, but only for non-API paths"""
+   
+    if full_path.startswith("api/"):
+        raise HTTPException(status_code=404, detail="Not found")
+    
+    
+    container_static_path = "/app/ui/dist"
+    if os.path.exists(container_static_path):
+        static_dir = container_static_path
+        logger.info(f"Container deployment detected, using: {static_dir}")
+    elif os.path.exists("ui/dist"):
+        static_dir = "ui/dist"
+        logger.info(f"Local deployment detected, using: {static_dir}")
+    else:
+       
+        for alt_path in ["./ui/dist", "dist", "/app/dist"]:
+            if os.path.exists(alt_path):
+                static_dir = alt_path
+                logger.info(f"Using alternative static path: {static_dir}")
+                break
+        else:
+            logger.error("No static directory found, frontend will not be served")
+            raise HTTPException(status_code=404, detail="Static files not found")
+    
+   
+    if full_path == "" or full_path == "/":
+        file_path = os.path.join(static_dir, "index.html")
+    else:
+        file_path = os.path.join(static_dir, full_path)
+    
+    
+    if os.path.isfile(file_path):
+        return FileResponse(file_path)
+    
+    
+    index_path = os.path.join(static_dir, "index.html")
+    if os.path.isfile(index_path):
+        return FileResponse(index_path)
+    
+    raise HTTPException(status_code=404, detail="Not found")
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
