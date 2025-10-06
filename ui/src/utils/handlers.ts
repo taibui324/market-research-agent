@@ -13,7 +13,7 @@ export const handleGeneratePdf = async (
   setIsGeneratingPdf(true);
   try {
     console.log("Generating PDF with company name:", originalCompanyName);
-    const response = await fetch(`${API_URL}/generate-pdf`, {
+    const response = await fetch(`${API_URL}/api/generate-pdf`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -83,7 +83,7 @@ export const checkForFinalReport = async (
   pollingIntervalRef: React.MutableRefObject<NodeJS.Timeout | null>
 ) => {
   try {
-    const response = await fetch(`${API_URL}/job_status/${jobId}`);
+    const response = await fetch(`${API_URL}/api/job_status/${jobId}`);
     if (!response.ok) throw new Error('Failed to fetch status');
     
     const data = await response.json();
