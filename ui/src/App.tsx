@@ -387,8 +387,8 @@ function App() {
     
     // Use the WS_URL directly if it's a full URL, otherwise construct it
     const wsUrl = WS_URL.startsWith('wss://') || WS_URL.startsWith('ws://')
-      ? `${WS_URL}/company_analysis/ws/${jobId}`
-      : `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${WS_URL}/company_analysis/ws/${jobId}`;
+      ? `${WS_URL}/api/company_analysis/ws/${jobId}`
+      : `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${WS_URL}/api/company_analysis/ws/${jobId}`;
     
     console.log("Connecting to WebSocket URL:", wsUrl);
     
@@ -855,7 +855,7 @@ function App() {
     setAgentPerformance({}); // Reset agent performance
 
     try {
-      const url = `${API_URL}/research/3c-analysis`;
+      const url = `${API_URL}/api/research/3c-analysis`;
 
       const response = await fetch(url, {
         method: "POST",
@@ -933,7 +933,7 @@ function App() {
     setHasScrolledToStatus(false); // Reset scroll flag when starting new research
 
     try {
-      const url = `${API_URL}/company_analysis`;
+      const url = `${API_URL}/api/company_analysis`;
 
       // Format the company URL if provided
       const formattedCompanyUrl = formData.companyUrl
@@ -1018,7 +1018,7 @@ function App() {
     setIsGeneratingPdf(true);
     try {
       console.log("Generating PDF with company name:", originalCompanyName);
-      const response = await fetch(`${API_URL}/generate-pdf`, {
+      const response = await fetch(`${API_URL}/api/generate-pdf`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
