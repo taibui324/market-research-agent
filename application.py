@@ -72,12 +72,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include API router
-app.include_router(api_router)
-
-# Mount static files at root (must be last to avoid conflicts with API routes)
-app.mount("/", StaticFiles(directory=os.getenv("STATIC_DIR", "ui/dist"), html=True), name="static")
-
 manager = WebSocketManager()
 pdf_service = PDFService({"pdf_output_dir": "pdfs"})
 
@@ -1575,6 +1569,12 @@ async def delete_shared_report(share_id: str):
     except Exception as e:
         logger.error(f"Error deleting shared report: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+# Include API router
+app.include_router(api_router)
+
+# Mount static files for the UI (excluding API routes)
+app.mount("/ui", StaticFiles(directory=os.getenv("STATIC_DIR", "ui/dist"), html=True), name="static")
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
