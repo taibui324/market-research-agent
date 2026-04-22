@@ -389,6 +389,149 @@ flowchart LR
 ```
 
 
+## API Architecture
+
+### Request Flow Pattern
+
+Every research request follows an async **fire-and-forget with streaming** pattern:
+
+```
+Client POST → Server returns job_id immediately → Client connects WebSocket →
+Background task streams progress → Final result sent via WebSocket + stored in MongoDB
+```
+
+The HTTP response is instant (just a job ID). All real work happens in a background `asyncio.create_task`. The client gets live updates by connecting to a WebSocket with that job ID.
+
+### REST Endpoints
+
+**Company Research Pipeline:**
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `POST` | `/api/company_analysis` | Start company research. Accepts company name, URL, industry, competitors. Returns `job_id`. |
+| `GET` | `/api/company_analysis/{job_id}` | Poll job status (fallback if WebSocket disconnects) |
+| `GET` | `/api/company_analysis/{job_id}/report` | Fetch the final report for a completed job |
+| `GET` | `/api/company_analysis/pdf/{filename}` | Download a generated PDF report |
+
+**3C Market Analysis Pipeline:**
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `POST` | `/api/research/3c-analysis` | Start 3C analysis. Accepts target market, analysis depth, agent selection, execution mode. Returns `job_id` + estimated completion time. |
+
+**Shared Endpoints:**
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `POST` | `/api/generate-pdf` | Generate PDF from markdown report content |
+| `POST` | `/api/share-report` | Create a shareable link for a report |
+| `GET` | `/api/shared-report/{share_id}` | Retrieve a shared report |
+
+### WebSocket Endpoints
+
+| Path | Purpose |
+|------|---------|
+| `ws://host/api/company_analysis/ws/{job_id}` | Stream progress for company research |
+| `ws://host/api/research/ws/{job_id}` | Stream progress for 3C analysis |
+
+Both endpoints register the client connection with the `WebSocketManager` for that `job_id`. If the job already has results (client connected late), it immediately sends the current status.
+
+### Background Processing Flow
+
+```
+POST /api/company_analysis
+    │
+    ├─ Validate request (Pydantic model)
+    ├─ Generate UUID job_id
+    ├─ Store job in MongoDB (status: "pending")
+    ├─ asyncio.create_task(process_research(job_id, data))  ← fire and forget
+    └─ Return {"job_id": "...", "websocket_url": "..."}     ← immediate response
+
+Background task:
+    │
+    ├─ Send WebSocket: "processing started"
+    ├─ Initialize Graph / ThreeCAnalysisOrchestrator
+    ├─ async for state in graph.run():
+    │       └─ Each node streams updates via WebSocket
+    ├─ Extract final report from state
+    ├─ Store report in MongoDB
+    ├─ Send WebSocket: "completed" + full report
+    └─ Update job status in MongoDB
+```
+
+### Data Models
+
+```python
+# Company Research
+class ResearchRequest(BaseModel):
+    company: str
+    company_url: Optional[str]
+    industry: Optional[str]
+    hq_location: Optional[str]
+    product_category: Optional[str]
+    competitors: List[CompetitorData]
+
+# 3C Market Analysis
+class MarketResearchRequest(BaseModel):
+    analysis_type: str = "3c_analysis"
+    analysis_depth: str = "comprehensive"    # comprehensive/focused/quick
+    target_market: str = "japanese_curry"
+    selected_agents: Optional[List[str]]     # which agents to run
+    execution_mode: str = "hybrid"           # parallel/sequential/hybrid
+    enable_performance_tracking: bool = True
+    priority_level: str = "normal"
+```
+
+### Job Status Tracking
+
+Jobs are tracked in two places:
+- **In-memory dict** (`defaultdict`) — fast access for status polling during execution
+- **MongoDB** (`jobs` collection) — persistent storage that survives restarts
+
+### WebSocket Message Types
+
+| Type | When | Payload |
+|------|------|---------|
+| `status_update` | General status changes | `{status, message, error, result}` |
+| `agent_progress` | Per-agent progress | `{agent_name, agent_status, progress_percentage}` |
+| `workflow_progress` | Overall completion | `{progress_percentage, current_step}` |
+| `query_generating` | Live query streaming | `{query, query_number, category}` |
+| `report_chunk` | Streaming report | `{chunk}` (appended on client) |
+
+### System Diagram
+
+```
+                    React UI (port 5174)
+                     │           ▲
+            HTTP POST│           │ WebSocket (live updates)
+                     ▼           │
+              ┌──────────────────────────┐
+              │   FastAPI (port 8000)     │
+              │                          │
+              │  /api/company_analysis   │── POST → job_id
+              │  /api/research/3c-analysis── POST → job_id
+              │  /api/research/ws/{id}   │── WebSocket
+              │  /api/company_analysis/ws│── WebSocket
+              │                          │
+              │  ┌────────────────────┐  │
+              │  │ asyncio.create_task│  │  ← Background processing
+              │  │                    │  │
+              │  │  Graph / 3C Orch.  │  │
+              │  │    (LangGraph)     │  │
+              │  │        │          │  │
+              │  │   WebSocketManager │──┼── broadcasts to clients
+              │  └────────────────────┘  │
+              │           │              │
+              │     MongoDBService       │
+              └───────────┼──────────────┘
+                          │
+                    ┌─────▼─────┐
+                    │  MongoDB   │  (port 27017)
+                    │  - jobs    │
+                    │  - reports │
+                    └───────────┘
+```
+
 
 ## Features
 
